@@ -50,14 +50,6 @@ CREATE TABLE borrow_records (
   FOREIGN KEY (userId) REFERENCES users(id)
 );
 
--- Create user_borrowed_books junction table
-CREATE TABLE user_borrowed_books (
-  userId INT NOT NULL,
-  bookId INT NOT NULL,
-  PRIMARY KEY (userId, bookId),
-  FOREIGN KEY (userId) REFERENCES users(id),
-  FOREIGN KEY (bookId) REFERENCES books(id)
-);
 
 -- Create notifications table
 CREATE TABLE notifications (
@@ -72,8 +64,27 @@ CREATE TABLE notifications (
   FOREIGN KEY (userId) REFERENCES users(id)
 );
 
+-- Create book reservations table for managing book reservation queue
+CREATE TABLE book_reservations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  bookId INT NOT NULL,
+  userId INT NOT NULL,
+  reservationDate DATETIME NOT NULL,
+  dueDate DATETIME NOT NULL, -- Ngày hết hạn đặt trước
+  priority INT NOT NULL, -- Lower number means higher priority in queue
+  status ENUM('pending', 'fulfilled', 'cancelled') NOT NULL DEFAULT 'pending',
+  notificationSent BOOLEAN DEFAULT FALSE,
+  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (bookId) REFERENCES books(id),
+  FOREIGN KEY (userId) REFERENCES users(id)
+);
+
 -- Indexes for better performance
 CREATE INDEX idx_books_category ON books(category);
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_borrow_records_status ON borrow_records(status);
 CREATE INDEX idx_notifications_userId ON notifications(userId);
+CREATE INDEX idx_book_reservations_status ON book_reservations(status);
+CREATE INDEX idx_book_reservations_bookId ON book_reservations(bookId);
+CREATE INDEX idx_book_reservations_userId ON book_reservations(userId);

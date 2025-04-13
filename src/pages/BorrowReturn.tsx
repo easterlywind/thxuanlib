@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -10,19 +9,21 @@ import {
   Dialog, 
   DialogContent, 
   DialogHeader, 
-  DialogTitle 
+  DialogTitle, 
+  DialogFooter
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { BookOpen, QrCode, Search, Check, AlertTriangle } from 'lucide-react';
+import { BookOpen, QrCode, Search, Check, AlertTriangle, BookMarked, Calendar } from 'lucide-react';
 import QRScanner from '@/components/QRScanner';
-import { User, Book, BorrowRecord } from '@/types';
-import { usersApi, booksApi, borrowRecordsApi } from '@/services/apiService';
+import { User, Book, BorrowRecord, Notification, BookReservation } from '@/types';
+import { usersApi, booksApi, borrowRecordsApi, reservationApi, notificationsApi } from '@/services/apiService';
 
 enum BorrowReturnMode {
   IDLE,
   SCANNING,
   BOOK_INPUT,
-  CONFIRM
+  CONFIRM,
+  RESERVE_CONFIRM // Trạng thái xác nhận đặt trước sách
 }
 
 const BorrowReturn = () => {
@@ -40,10 +41,12 @@ const BorrowReturn = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isUserBlocked, setIsUserBlocked] = useState(false);
   const [isReturn, setIsReturn] = useState(false);
+  const [isReserving, setIsReserving] = useState(false); // Flag để biết đang đặt trước sách
   const [bookISBN, setBookISBN] = useState('');
   const [currentBook, setCurrentBook] = useState<Book | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [userBorrowRecords, setUserBorrowRecords] = useState<(BorrowRecord & { bookTitle?: string })[]>([]);
+  const [userReservations, setUserReservations] = useState<BookReservation[]>([]);
   const [booksData, setBooksData] = useState<Book[]>([]);
 
   const handleScanQR = async (data: string) => {
@@ -73,9 +76,10 @@ const BorrowReturn = () => {
       }
 
       // Get all data we need from API
-      const [allBorrowRecords, allBooks] = await Promise.all([
+      const [allBorrowRecords, allBooks, reservations] = await Promise.all([
         borrowRecordsApi.getAll(),
-        booksApi.getAll()
+        booksApi.getAll(),
+        reservationApi.getUserReservations(userId)
       ]);
       
       // Save books data for later use
@@ -100,6 +104,7 @@ const BorrowReturn = () => {
       setCurrentUser(foundUser);
       setIsUserBlocked(!!foundUser.isBlocked);
       setUserBorrowRecords(enhancedRecords);
+      setUserReservations(reservations);
       setIsReturn(records.length > 0);
 
       // Update UI with a small delay
@@ -158,7 +163,10 @@ const BorrowReturn = () => {
       } else {
         // Check if book is available for borrowing
         if (foundBook.availableQuantity <= 0) {
-          setErrorMessage('Sách này hiện không có sẵn để mượn');
+          setErrorMessage('Sách này hiện không có sẵn để mượn. Bạn có thể đặt trước sách này.');
+          setIsReserving(true);
+          setCurrentBook(foundBook);
+          setMode(BorrowReturnMode.RESERVE_CONFIRM);
           return;
         }
       }
@@ -176,7 +184,7 @@ const BorrowReturn = () => {
 
     const today = new Date();
     const dueDate = new Date(today);
-    dueDate.setDate(today.getDate() + 30); // 30 days borrowing period
+    dueDate.setDate(today.getDate() + 14); // 14 days borrowing period
 
     try {
       if (isReturn) {
@@ -188,13 +196,93 @@ const BorrowReturn = () => {
         if (recordToUpdate) {
           // Call API to return book
           await borrowRecordsApi.returnBook(recordToUpdate.id, today.toISOString());
+          
+          // Cập nhật số lượng sách có sẵn
+          await booksApi.update(currentBook.id, {
+            availableQuantity: currentBook.availableQuantity + 1
+          });
+          
+          // Kiểm tra có ai đặt trước sách này không
+          try {
+            const bookReservations = await reservationApi.getBookReservations(currentBook.id);
+            const pendingReservations = bookReservations
+              .filter(res => res.status === 'pending')
+              .sort((a, b) => a.priority - b.priority); // Sắp xếp theo thứ tự ưu tiên
+              
+            if (pendingReservations.length > 0) {
+              // Lấy người đầu tiên trong hàng đợi đặt trước
+              const firstReservation = pendingReservations[0];
+              
+              // Tạo thông báo cho người dùng đã đặt trước
+              await notificationsApi.create({
+                userId: firstReservation.userId,
+                title: 'Sách đã có sẵn',
+                message: `Sách "${currentBook.title}" mà bạn đặt trước đã có sẵn. Vui lòng đến thư viện để mượn trong vòng 2 ngày.`,
+                date: new Date().toISOString(),
+                read: false,
+                type: 'book_available'
+              });
+              
+              // Cập nhật trạng thái đặt trước
+              await reservationApi.update(firstReservation.id, {
+                notificationSent: true
+              });
+              
+              console.log('Đã gửi thông báo cho người đặt trước:', firstReservation.userId);
+            }
+          } catch (reservationError) {
+            console.error('Lỗi khi kiểm tra đặt trước sách:', reservationError);
+          }
+          
           toast.success(`${currentUser.fullName} đã trả sách "${currentBook.title}" thành công`);
         } else {
           toast.error('Không tìm thấy thông tin mượn sách');
         }
+      } else if (isReserving) {
+        // Xử lý đặt trước sách khi hết số lượng
+        try {
+          // Kiểm tra xem người dùng đã đặt trước cuốn sách này chưa
+          const existingReservations = await reservationApi.getUserReservations(currentUser.id);
+          const alreadyReserved = existingReservations.find(
+            res => res.bookId === currentBook.id && (res.status === 'pending')
+          );
+          
+          if (alreadyReserved) {
+            toast.error('Bạn đã đặt trước cuốn sách này rồi');
+            return;
+          }
+          
+          // Lấy số thứ tự ưu tiên trong hàng đợi
+          const bookReservations = await reservationApi.getBookReservations(currentBook.id);
+          const priority = bookReservations.filter(res => res.status === 'pending').length + 1;
+          
+          // Tạo bản ghi đặt trước sách
+          await reservationApi.create({
+            bookId: currentBook.id,
+            userId: currentUser.id,
+            reservationDate: today.toISOString(),
+            dueDate: dueDate.toISOString(), // Ngày hết hạn đặt trước
+            priority: priority,
+            status: 'pending', // Sử dụng trạng thái 'pending'
+            notificationSent: false
+          });
+          
+          toast.success(`${currentUser.fullName} đã đặt trước sách "${currentBook.title}" thành công. Bạn đang ở vị trí ${priority} trong danh sách chờ.`);
+        } catch (reserveError) {
+          console.error('Lỗi khi đặt trước sách:', reserveError);
+          toast.error(`Không thể đặt trước sách: ${reserveError instanceof Error ? reserveError.message : 'Lỗi không xác định'}`);
+          throw reserveError;
+        }
       } else {
+        // Kiểm tra xem sách có sẵn để mượn không
+        if (currentBook.availableQuantity <= 0) {
+          // Chuyển sang chế độ đặt trước nếu sách không có sẵn
+          setIsReserving(true);
+          setMode(BorrowReturnMode.RESERVE_CONFIRM);
+          return;
+        }
+        
         // Create new borrow record with exact fields expected by the server
-        // Create record with correct type for status field
         const newRecord: Omit<BorrowRecord, 'id'> = {
           bookId: currentBook.id,
           userId: currentUser.id,
@@ -208,6 +296,28 @@ const BorrowReturn = () => {
         try {
           // Call API to create borrow record
           const result = await borrowRecordsApi.create(newRecord);
+          
+          // Cập nhật số lượng sách có sẵn
+          await booksApi.update(currentBook.id, {
+            availableQuantity: currentBook.availableQuantity - 1
+          });
+          
+          // Tạo thông báo nhắc nhở trả sách trước hạn
+          const reminderDate = new Date(dueDate);
+          reminderDate.setDate(reminderDate.getDate() - 2); // 2 ngày trước hạn
+          
+          if (reminderDate > today) {
+            await notificationsApi.create({
+              userId: currentUser.id,
+              title: 'Nhắc nhở trả sách',
+              message: `Sách "${currentBook.title}" sẽ đến hạn trả vào ngày ${dueDate.toLocaleDateString('vi-VN')}. Vui lòng trả sách đúng hạn.`,
+              date: reminderDate.toISOString(),
+              read: false,
+              type: 'return_reminder'
+            });
+            console.log('Đã tạo thông báo nhắc nhở trả sách');
+          }
+          
           console.log('Borrow record created successfully:', result);
           toast.success(`${currentUser.fullName} đã mượn sách "${currentBook.title}" thành công`);
         } catch (borrowError) {
@@ -230,9 +340,6 @@ const BorrowReturn = () => {
       
       toast.error(errorMessage);
     }
-
-    // Reset state
-    resetState();
   };
 
   const resetState = () => {
@@ -240,10 +347,12 @@ const BorrowReturn = () => {
     setCurrentUser(null);
     setIsUserBlocked(false);
     setIsReturn(false);
+    setIsReserving(false);
     setBookISBN('');
     setCurrentBook(null);
     setErrorMessage('');
     setUserBorrowRecords([]);
+    setUserReservations([]);
   };
 
   if (!librarian || librarian.role !== 'librarian') {
@@ -390,7 +499,7 @@ const BorrowReturn = () => {
         </Card>
       )}
 
-      {mode === BorrowReturnMode.CONFIRM && currentBook && (
+      {(mode === BorrowReturnMode.CONFIRM || mode === BorrowReturnMode.RESERVE_CONFIRM) && currentBook && (
         <Card className="mb-6">
           <CardContent className="pt-6 space-y-4">
             <div className="flex items-center space-x-4">
@@ -416,9 +525,16 @@ const BorrowReturn = () => {
                   ISBN: {currentBook.isbn}
                 </p>
                 {!isReturn && (
-                  <p className="text-sm text-gray-500">
-                    Còn lại: {currentBook.availableQuantity}/{currentBook.quantity}
-                  </p>
+                  <div>
+                    <p className="text-sm text-gray-500">
+                      Còn lại: {currentBook.availableQuantity}/{currentBook.quantity}
+                    </p>
+                    {isReserving && (
+                      <p className="text-sm mt-1 text-orange-500 font-medium">
+                        Sách hiện không còn. Bạn sẽ đặt trước sách này.
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -428,7 +544,10 @@ const BorrowReturn = () => {
               <p className="text-sm text-blue-700">
                 {isReturn 
                   ? `${currentUser?.fullName} sẽ trả sách "${currentBook.title}".`
-                  : `${currentUser?.fullName} sẽ mượn sách "${currentBook.title}".`
+                  : (isReserving
+                    ? `${currentUser?.fullName} sẽ đặt trước sách "${currentBook.title}".`
+                    : `${currentUser?.fullName} sẽ mượn sách "${currentBook.title}".`
+                  )
                 }
               </p>
             </div>
@@ -446,7 +565,7 @@ const BorrowReturn = () => {
                 onClick={handleConfirmAction}
               >
                 <Check size={18} className="mr-2" />
-                {isReturn ? 'Xác nhận trả sách' : 'Xác nhận mượn sách'}
+                {isReturn ? 'Xác nhận trả sách' : (isReserving ? 'Xác nhận đặt trước sách' : 'Xác nhận mượn sách')}
               </Button>
             </div>
           </CardContent>

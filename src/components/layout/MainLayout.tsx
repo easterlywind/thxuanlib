@@ -12,11 +12,15 @@ import {
   BarChart3, 
   User, 
   LogOut,
-  Bell
+  Bell,
+  BookMarked,
+  Calendar
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Notification } from '@/types';
+import { notificationsApi } from '@/services/apiService';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -27,12 +31,37 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [activePath, setActivePath] = useState('/');
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     const path = location.pathname;
     const mainPath = path === "/" ? "/" : `/${path.split('/')[1]}`;
     setActivePath(mainPath);
   }, [location]);
+
+  // Fetch user notifications
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      if (user?.id) {
+        try {
+          const userNotifications = await notificationsApi.getUserNotifications(user.id);
+          setNotifications(userNotifications);
+          const unread = userNotifications.filter(notification => !notification.read).length;
+          setUnreadCount(unread);
+        } catch (error) {
+          console.error('Error fetching notifications:', error);
+        }
+      }
+    };
+
+    fetchNotifications();
+    
+    // Set up interval to check for new notifications every 5 minutes
+    const intervalId = setInterval(fetchNotifications, 5 * 60 * 1000);
+    
+    return () => clearInterval(intervalId);
+  }, [user?.id]);
 
   const handleLogout = () => {
     logout();
@@ -57,8 +86,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         <div className="flex items-center space-x-4">
           <Dialog>
             <DialogTrigger asChild>
-              <Button variant="ghost" className="text-white">
+              <Button variant="ghost" className="text-white relative">
                 <Bell size={20} />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
+                    {unreadCount}
+                  </span>
+                )}
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -66,19 +100,63 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 <DialogTitle>Thông báo</DialogTitle>
               </DialogHeader>
               <div className="py-4">
-                {user?.role === 'student' ? (
-                  <div className="space-y-3">
-                    <div className="p-3 border rounded-md">
-                      <p className="font-medium">Nhắc nhở trả sách</p>
-                      <p className="text-sm text-gray-500">Bạn cần trả sách "Lập trình C++" trong 2 ngày</p>
-                    </div>
+                {notifications.length > 0 ? (
+                  <div className="space-y-3 max-h-80 overflow-y-auto">
+                    {notifications.map((notification) => {
+                      const isUnread = !notification.read;
+                      let icon;
+                      
+                      // Select icon based on notification type
+                      switch (notification.type) {
+                        case 'return_reminder':
+                          icon = <Calendar className="text-yellow-500" size={18} />;
+                          break;
+                        case 'book_available':
+                          icon = <BookMarked className="text-green-500" size={18} />;
+                          break;
+                        case 'overdue':
+                          icon = <Calendar className="text-red-500" size={18} />;
+                          break;
+                        default:
+                          icon = <Bell className="text-blue-500" size={18} />;
+                      }
+                      
+                      return (
+                        <div 
+                          key={notification.id} 
+                          className={`p-3 border rounded-md ${isUnread ? 'bg-blue-50' : ''}`}
+                          onClick={async () => {
+                            if (!notification.read) {
+                              try {
+                                await notificationsApi.markAsRead(notification.id);
+                                setNotifications(prev => prev.map(n => 
+                                  n.id === notification.id ? {...n, read: true} : n
+                                ));
+                                setUnreadCount(prev => Math.max(0, prev - 1));
+                              } catch (error) {
+                                console.error('Error marking notification as read:', error);
+                              }
+                            }
+                          }}
+                        >
+                          <div className="flex items-start">
+                            <div className="mr-2 mt-1">{icon}</div>
+                            <div>
+                              <p className="font-medium">{notification.title}</p>
+                              <p className="text-sm text-gray-500">{notification.message}</p>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {new Date(notification.date).toLocaleString('vi-VN')}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    <div className="p-3 border rounded-md">
-                      <p className="font-medium">Cập nhật hệ thống</p>
-                      <p className="text-sm text-gray-500">Hệ thống sẽ bảo trì vào 22h ngày 10/4</p>
-                    </div>
+                  <div className="text-center py-6 text-gray-500">
+                    <Bell className="mx-auto mb-2" size={24} />
+                    <p>Không có thông báo mới</p>
                   </div>
                 )}
               </div>

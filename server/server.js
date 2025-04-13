@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
@@ -46,6 +45,13 @@ const comparePassword = async (plainPassword, hashedPassword) => {
     return plainPassword === hashedPassword;
   }
 };
+
+// Utility function to format dates to MySQL format (YYYY-MM-DD HH:MM:SS)
+const formatDate = (dateString) => {
+  const date = new Date(dateString);
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+};
+
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // Configure multer for image upload
@@ -246,12 +252,7 @@ app.post('/api/borrow-records', async (req, res) => {
     await connection.beginTransaction();
     
     try {
-      // Format dates to MySQL format (YYYY-MM-DD HH:MM:SS)
-      const formatDate = (dateString) => {
-        const date = new Date(dateString);
-        return date.toISOString().slice(0, 19).replace('T', ' ');
-      };
-      
+      // Format dates to MySQL format
       const formattedBorrowDate = formatDate(borrowDate);
       const formattedDueDate = formatDate(dueDate);
       
@@ -321,11 +322,6 @@ app.put('/api/borrow-records/:id/return', async (req, res) => {
       const record = records[0];
       
       // Format return date to MySQL format
-      const formatDate = (dateString) => {
-        const date = new Date(dateString);
-        return date.toISOString().slice(0, 19).replace('T', ' ');
-      };
-      
       const formattedReturnDate = formatDate(returnDate);
       log(`Formatted return date: ${formattedReturnDate}`);
       
@@ -441,6 +437,203 @@ app.get('/api/borrows/check/:id', async (req, res) => {
   } catch (error) {
     console.error('Error checking borrow status:', error);
     res.status(500).json({ error: 'Failed to check borrow status' });
+  }
+});
+
+// Reservation endpoints
+app.get('/api/reservations', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM book_reservations');
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching reservations:', error);
+    res.status(500).json({ error: 'Failed to fetch reservations' });
+  }
+});
+
+app.post('/api/reservations', async (req, res) => {
+  try {
+    const { bookId, userId, reservationDate, dueDate, priority, status, notificationSent } = req.body;
+    
+    // Format dates to MySQL format (YYYY-MM-DD HH:MM:SS)
+    const formatDateLocal = (dateString) => {
+      const date = new Date(dateString);
+      return date.toISOString().slice(0, 19).replace('T', ' ');
+    };
+    
+    // Format dates
+    const formattedReservationDate = formatDateLocal(reservationDate);
+    const formattedDueDate = dueDate ? formatDateLocal(dueDate) : null;
+    
+    const [result] = await pool.query(
+      'INSERT INTO book_reservations (bookId, userId, reservationDate, dueDate, priority, status, notificationSent) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [bookId, userId, formattedReservationDate, formattedDueDate, priority, status, notificationSent ? 1 : 0]
+    );
+    
+    res.status(201).json({ id: result.insertId, ...req.body });
+  } catch (error) {
+    console.error('Error creating reservation:', error);
+    res.status(500).json({ error: 'Failed to create reservation' });
+  }
+});
+
+app.get('/api/reservations/user/:userId', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM book_reservations WHERE userId = ?',
+      [req.params.userId]
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching user reservations:', error);
+    res.status(500).json({ error: 'Failed to fetch user reservations' });
+  }
+});
+
+app.get('/api/reservations/book/:bookId', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM book_reservations WHERE bookId = ?',
+      [req.params.bookId]
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching book reservations:', error);
+    res.status(500).json({ error: 'Failed to fetch book reservations' });
+  }
+});
+
+app.put('/api/reservations/:id', async (req, res) => {
+  try {
+    const { status, notificationSent, priority } = req.body;
+    const updates = [];
+    const values = [];
+    
+    if (status !== undefined) {
+      updates.push('status = ?');
+      values.push(status);
+    }
+    
+    if (notificationSent !== undefined) {
+      updates.push('notificationSent = ?');
+      values.push(notificationSent ? 1 : 0);
+    }
+    
+    if (priority !== undefined) {
+      updates.push('priority = ?');
+      values.push(priority);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    values.push(req.params.id);
+    
+    const [result] = await pool.query(
+      `UPDATE book_reservations SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Reservation not found' });
+    }
+    
+    // Fetch the updated reservation
+    const [rows] = await pool.query('SELECT * FROM book_reservations WHERE id = ?', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Error updating reservation:', error);
+    res.status(500).json({ error: 'Failed to update reservation' });
+  }
+});
+
+app.delete('/api/reservations/:id', async (req, res) => {
+  try {
+    const [result] = await pool.query('DELETE FROM book_reservations WHERE id = ?', [req.params.id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Reservation not found' });
+    }
+    
+    res.json({ message: 'Reservation cancelled successfully' });
+  } catch (error) {
+    console.error('Error cancelling reservation:', error);
+    res.status(500).json({ error: 'Failed to cancel reservation' });
+  }
+});
+
+// Notifications endpoints
+app.get('/api/notifications', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM notifications');
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+app.get('/api/notifications/user/:userId', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM notifications WHERE userId = ? ORDER BY date DESC',
+      [req.params.userId]
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching user notifications:', error);
+    res.status(500).json({ error: 'Failed to fetch user notifications' });
+  }
+});
+
+app.post('/api/notifications', async (req, res) => {
+  try {
+    const { userId, title, message, date, read, type } = req.body;
+    const formattedDate = formatDate(date);
+    
+    const [result] = await pool.query(
+      'INSERT INTO notifications (userId, title, message, date, `read`, type) VALUES (?, ?, ?, ?, ?, ?)',
+      [userId, title, message, formattedDate, read ? 1 : 0, type]
+    );
+    
+    res.status(201).json({ id: result.insertId, ...req.body });
+  } catch (error) {
+    console.error('Error creating notification:', error);
+    res.status(500).json({ error: 'Failed to create notification' });
+  }
+});
+
+app.put('/api/notifications/:id/read', async (req, res) => {
+  try {
+    const [result] = await pool.query(
+      'UPDATE notifications SET `read` = 1 WHERE id = ?',
+      [req.params.id]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    
+    res.json({ id: req.params.id, read: true });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res.status(500).json({ error: 'Failed to mark notification as read' });
+  }
+});
+
+app.delete('/api/notifications/:id', async (req, res) => {
+  try {
+    const [result] = await pool.query('DELETE FROM notifications WHERE id = ?', [req.params.id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    
+    res.json({ message: 'Notification deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    res.status(500).json({ error: 'Failed to delete notification' });
   }
 });
 

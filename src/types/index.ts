@@ -34,6 +34,17 @@ export interface BorrowRecord {
   status: "borrowed" | "returned" | "overdue" | "reserved";
 }
 
+export interface BookReservation {
+  id: string;
+  bookId: string;
+  userId: string;
+  reservationDate: string; // ISO date string
+  dueDate: string; // Date khi đặt trước hết hạn
+  priority: number;
+  status: "pending" | "fulfilled" | "cancelled";
+  notificationSent: boolean;
+}
+
 export interface Notification {
   id: string;
   userId: string;

@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
@@ -23,16 +22,20 @@ import {
   User, 
   BookOpen, 
   Key,
-  AlertTriangle
+  AlertTriangle,
+  BookMarked
 } from 'lucide-react';
 import axios from 'axios';
 import { ChangePasswordDialog } from '@/components/ChangePasswordDialog';
+import { reservationApi } from '@/services/apiService';
 
 const Account = () => {
   const { user, logout } = useAuth();
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [borrowedBooks, setBorrowedBooks] = useState([]);
+  const [reservedBooks, setReservedBooks] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingReservations, setIsLoadingReservations] = useState(true);
 
   // Fetch user's borrowed books
   useEffect(() => {
@@ -40,8 +43,8 @@ const Account = () => {
       if (!user) return;
       try {
         const [borrowResponse, booksResponse] = await Promise.all([
-          axios.get('http://localhost:5000/api/borrow-records'),
-          axios.get('http://localhost:5000/api/books')
+          axios.get('http://localhost:5001/api/borrow-records'),
+          axios.get('http://localhost:5001/api/books')
         ]);
 
         const userBorrowRecords = borrowResponse.data.filter(
@@ -71,11 +74,54 @@ const Account = () => {
     fetchBorrowedBooks();
   }, [user]);
 
-  
+  // Fetch user's reserved books
+  useEffect(() => {
+    const fetchReservedBooks = async () => {
+      if (!user) return;
+      try {
+        setIsLoadingReservations(true);
+        const [reservationsResponse, booksResponse] = await Promise.all([
+          reservationApi.getUserReservations(user.id),
+          axios.get('http://localhost:5001/api/books')
+        ]);
+
+        const books = booksResponse.data;
+        const reservedBooks = reservationsResponse.map(reservation => {
+          const book = books.find(b => b.id === reservation.bookId);
+          return {
+            ...reservation,
+            bookTitle: book?.title || 'Unknown Book',
+            bookAuthor: book?.author || 'Unknown Author',
+            bookCover: book?.coverImage
+          };
+        });
+
+        setReservedBooks(reservedBooks);
+      } catch (error) {
+        console.error('Error fetching reserved books:', error);
+        toast.error('Không thể tải danh sách sách đã đặt trước');
+      } finally {
+        setIsLoadingReservations(false);
+      }
+    };
+
+    fetchReservedBooks();
+  }, [user]);
 
   const handleLogout = () => {
     logout();
     toast.success('Đã đăng xuất');
+  };
+
+  const handleCancelReservation = async (reservationId) => {
+    try {
+      await reservationApi.cancelReservation(reservationId);
+      setReservedBooks(prevBooks => prevBooks.filter(book => book.id !== reservationId));
+      toast.success('Hủy đặt trước thành công');
+    } catch (error) {
+      console.error('Error cancelling reservation:', error);
+      toast.error('Không thể hủy đặt trước');
+    }
   };
 
   if (!user) {
@@ -163,12 +209,20 @@ const Account = () => {
               </div>
 
               {user.role === 'student' && (
-                <div className="grid grid-cols-2 gap-2 border-b pb-2">
-                  <div className="text-sm text-gray-500">Sách đang mượn</div>
-                  <div className="text-sm font-medium text-right">
-                    {borrowedBooks.length} sách
+                <>
+                  <div className="grid grid-cols-2 gap-2 border-b pb-2">
+                    <div className="text-sm text-gray-500">Sách đang mượn</div>
+                    <div className="text-sm font-medium text-right">
+                      {borrowedBooks.length} sách
+                    </div>
                   </div>
-                </div>
+                  <div className="grid grid-cols-2 gap-2 border-b pb-2">
+                    <div className="text-sm text-gray-500">Sách đã đặt trước</div>
+                    <div className="text-sm font-medium text-right">
+                      {reservedBooks.length} sách
+                    </div>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>
@@ -235,6 +289,116 @@ const Account = () => {
                                   )}
                                 </div>
                               </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {user.role === 'student' && (
+        <div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Sách đã đặt trước</CardTitle>
+              <CardDescription>
+                Danh sách các sách bạn đã đặt trước và đang chờ
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoadingReservations ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">Đang tải...</p>
+                </div>
+              ) : reservedBooks.length === 0 ? (
+                <div className="text-center py-8">
+                  <BookMarked className="mx-auto h-12 w-12 text-gray-300 mb-2" />
+                  <p className="text-gray-500">Bạn chưa đặt trước sách nào</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {reservedBooks.map(book => {
+                    const reservationDate = new Date(book.reservationDate);
+                    const status = book.status;
+                    
+                    let statusText = '';
+                    let statusClass = '';
+                    
+                    switch(status) {
+                      case 'pending':
+                        statusText = 'Đang chờ';
+                        statusClass = 'text-yellow-500';
+                        break;
+                      case 'ready':
+                        statusText = 'Sẵn sàng lấy';
+                        statusClass = 'text-green-500';
+                        break;
+                      case 'cancelled':
+                        statusText = 'Đã hủy';
+                        statusClass = 'text-red-500';
+                        break;
+                      default:
+                        statusText = 'Đang xử lý';
+                        statusClass = 'text-blue-500';
+                    }
+                    
+                    return (
+                      <Card key={book.id}>
+                        <CardContent className="p-4">
+                          <div className="flex">
+                            <div className="w-16 h-24 bg-gray-200 rounded overflow-hidden mr-4 flex-shrink-0">
+                              {book.bookCover ? (
+                                <img 
+                                  src={book.bookCover} 
+                                  alt={book.bookTitle} 
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <BookMarked size={20} className="text-gray-400" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex justify-between">
+                                <h3 className="font-medium">{book.bookTitle}</h3>
+                                <span className={`text-sm font-medium ${statusClass}`}>
+                                  {statusText}
+                                </span>
+                              </div>
+                              <p className="text-sm text-gray-500">
+                                {book.bookAuthor}
+                              </p>
+                              <div className="mt-2 text-sm">
+                                <div>
+                                  <span className="text-gray-500">Ngày đặt trước:</span>{" "}
+                                  {reservationDate.toLocaleDateString('vi-VN')}
+                                </div>
+                                {book.dueDate && (
+                                  <div>
+                                    <span className="text-gray-500">Hạn nhận sách:</span>{" "}
+                                    {new Date(book.dueDate).toLocaleDateString('vi-VN')}
+                                  </div>
+                                )}
+                              </div>
+                              {status !== 'cancelled' && (
+                                <div className="mt-3">
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="text-red-500"
+                                    onClick={() => handleCancelReservation(book.id)}
+                                  >
+                                    Hủy đặt trước
+                                  </Button>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </CardContent>

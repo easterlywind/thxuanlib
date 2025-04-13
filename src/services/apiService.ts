@@ -1,5 +1,5 @@
 
-import { Book, User, BorrowRecord, Notification } from '@/types';
+import { Book, User, BorrowRecord, Notification, BookReservation } from '@/types';
 
 const API_URL = 'http://localhost:5000/api';
 
@@ -78,6 +78,49 @@ export const borrowRecordsApi = {
   returnBook: (id: string, returnDate: string) => fetchData<BorrowRecord>(`/borrow-records/${id}/return`, {
     method: 'PUT',
     body: JSON.stringify({ returnDate }),
+  }),
+};
+
+// Book Reservation API
+export const reservationApi = {
+  getAll: () => fetchData<BookReservation[]>('/reservations'),
+  
+  create: (reservation: Omit<BookReservation, 'id'>) => fetchData<BookReservation>('/reservations', {
+    method: 'POST',
+    body: JSON.stringify(reservation),
+  }),
+  
+  update: (id: string, data: Partial<BookReservation>) => fetchData<BookReservation>(`/reservations/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  
+  getUserReservations: (userId: string) => fetchData<BookReservation[]>(`/reservations/user/${userId}`),
+  
+  getBookReservations: (bookId: string) => fetchData<BookReservation[]>(`/reservations/book/${bookId}`),
+  
+  cancelReservation: (id: string) => fetchData<{ message: string }>(`/reservations/${id}`, {
+    method: 'DELETE',
+  }),
+};
+
+// Notifications API
+export const notificationsApi = {
+  getAll: () => fetchData<Notification[]>('/notifications'),
+  
+  getUserNotifications: (userId: string) => fetchData<Notification[]>(`/notifications/user/${userId}`),
+  
+  create: (notification: Omit<Notification, 'id'>) => fetchData<Notification>('/notifications', {
+    method: 'POST',
+    body: JSON.stringify(notification),
+  }),
+  
+  markAsRead: (id: string) => fetchData<Notification>(`/notifications/${id}/read`, {
+    method: 'PUT',
+  }),
+  
+  delete: (id: string) => fetchData<{ message: string }>(`/notifications/${id}`, {
+    method: 'DELETE',
   }),
 };
 
