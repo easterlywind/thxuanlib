@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -32,8 +31,16 @@ const Login = () => {
       } else {
         toast.error('Sai thông tin tài khoản hoặc mật khẩu');
       }
-    } catch (error) {
-      toast.error('Đã xảy ra lỗi khi đăng nhập');
+    } catch (error: any) {
+      // Check for account blocked error
+      if (error.message === 'Account is blocked') {
+        const blockReason = error.reason || 'Liên hệ với thủ thư để được hỗ trợ';
+        toast.error(`Tài khoản đã bị khóa. ${blockReason}`);
+      } else if (error.statusCode === 403) {
+        toast.error('Tài khoản đã bị khóa. Liên hệ với thủ thư để được hỗ trợ');
+      } else {
+        toast.error('Đã xảy ra lỗi khi đăng nhập');
+      }
       console.error('Login error:', error);
     } finally {
       setIsLoading(false);

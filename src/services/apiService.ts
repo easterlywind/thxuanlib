@@ -1,4 +1,3 @@
-
 import { Book, User, BorrowRecord, Notification, BookReservation } from '@/types';
 
 const API_URL = 'http://localhost:5000/api';
@@ -15,7 +14,14 @@ const fetchData = async <T>(endpoint: string, options?: RequestInit): Promise<T>
     
     if (!response.ok) {
       const errorData = await response.json();
-      throw new Error(errorData.error || 'API request failed');
+      const errorMessage = errorData.error || 'API request failed';
+      // Create an error object with additional data
+      const error = new Error(errorMessage);
+      // @ts-ignore - Add additional properties to the error
+      error.statusCode = response.status;
+      // @ts-ignore
+      error.reason = errorData.reason;
+      throw error;
     }
     
     return await response.json() as T;

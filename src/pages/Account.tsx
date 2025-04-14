@@ -43,8 +43,8 @@ const Account = () => {
       if (!user) return;
       try {
         const [borrowResponse, booksResponse] = await Promise.all([
-          axios.get('http://localhost:5001/api/borrow-records'),
-          axios.get('http://localhost:5001/api/books')
+          axios.get('http://localhost:5000/api/borrow-records'),
+          axios.get('http://localhost:5000/api/books')
         ]);
 
         const userBorrowRecords = borrowResponse.data.filter(
@@ -82,7 +82,7 @@ const Account = () => {
         setIsLoadingReservations(true);
         const [reservationsResponse, booksResponse] = await Promise.all([
           reservationApi.getUserReservations(user.id),
-          axios.get('http://localhost:5001/api/books')
+          axios.get('http://localhost:5000/api/books')
         ]);
 
         const books = booksResponse.data;

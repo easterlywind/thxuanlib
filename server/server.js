@@ -130,6 +130,15 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
+    // Check if user account is blocked
+    if (user.isBlocked) {
+      log(`Login failed: User ${username} account is blocked`);
+      return res.status(403).json({ 
+        error: 'Account is blocked', 
+        reason: user.blockReason || 'Contact librarian for more information' 
+      });
+    }
+    
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
     
@@ -172,11 +181,28 @@ app.post('/api/books', async (req, res) => {
 
 app.put('/api/books/:id', async (req, res) => {
   try {
-    const { isbn, title, author, publishYear, category, publisher, quantity, coverImage } = req.body;
-    await pool.query(
-      'UPDATE books SET isbn = ?, title = ?, author = ?, publishYear = ?, category = ?, publisher = ?, quantity = ?, coverImage = ? WHERE id = ?',
-      [isbn, title, author, publishYear, category, publisher, quantity, coverImage, req.params.id]
-    );
+    // Create update query dynamically based on provided fields
+    const updateFields = [];
+    const values = [];
+    
+    // Add each provided field to the update query
+    Object.entries(req.body).forEach(([key, value]) => {
+      updateFields.push(`${key} = ?`);
+      values.push(value);
+    });
+    
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    // Add the ID as the last parameter
+    values.push(req.params.id);
+    
+    // Construct and execute the query
+    const query = `UPDATE books SET ${updateFields.join(', ')} WHERE id = ?`;
+    log(`Update book query: ${query}, values: ${JSON.stringify(values)}`);
+    
+    await pool.query(query, values);
     res.json({ id: req.params.id, ...req.body });
   } catch (error) {
     log(`Error updating book: ${error.message}`);
@@ -634,6 +660,155 @@ app.delete('/api/notifications/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting notification:', error);
     res.status(500).json({ error: 'Failed to delete notification' });
+  }
+});
+
+// Utility function to check for overdue books and lock user accounts
+const checkOverdueBooks = async () => {
+  try {
+    log('Checking for overdue books...');
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      // First, check if user_borrowed_books table exists, create it if it doesn't
+      try {
+        await connection.query(`
+          CREATE TABLE IF NOT EXISTS user_borrowed_books (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            userId INT NOT NULL,
+            bookId INT NOT NULL,
+            createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (userId) REFERENCES users(id),
+            FOREIGN KEY (bookId) REFERENCES books(id),
+            UNIQUE KEY unique_user_book (userId, bookId)
+          )
+        `);
+        log('Ensured user_borrowed_books table exists');
+      } catch (tableError) {
+        log(`Error checking/creating user_borrowed_books table: ${tableError.message}`);
+        // Continue even if this fails
+      }
+
+      // Get current date
+      const currentDate = new Date();
+      const formattedCurrentDate = formatDate(currentDate);
+      
+      // Find case 1: borrowed books past their due date
+      const [overdueRecords1] = await connection.query(
+        'SELECT * FROM borrow_records WHERE status = "borrowed" AND dueDate < ? AND returnDate IS NULL',
+        [formattedCurrentDate]
+      );
+      
+      // Find case 2: books already marked as overdue
+      const [overdueRecords2] = await connection.query(
+        'SELECT br.* FROM borrow_records br ' +
+        'LEFT JOIN users u ON br.userId = u.id ' +
+        'WHERE br.status = "overdue" AND br.returnDate IS NULL AND (u.isBlocked IS NULL OR u.isBlocked = 0)'
+      );
+      
+      // Combine both sets of records
+      const overdueRecords = [...overdueRecords1, ...overdueRecords2];
+      
+      log(`Found ${overdueRecords.length} overdue books (${overdueRecords1.length} newly overdue, ${overdueRecords2.length} already marked overdue)`);
+      
+      // Debug - log all overdue records for inspection
+      if (overdueRecords.length > 0) {
+        log(`Overdue records details: ${JSON.stringify(overdueRecords)}`);
+      }
+      
+      for (const record of overdueRecords) {
+        // Update the record status to overdue if it's not already
+        if (record.status !== 'overdue') {
+          await connection.query(
+            'UPDATE borrow_records SET status = "overdue" WHERE id = ?',
+            [record.id]
+          );
+          log(`Updated status to overdue for record ID: ${record.id}`);
+        }
+        
+        try {
+          // Check if the record exists in user_borrowed_books
+          const [existingRecords] = await connection.query(
+            'SELECT * FROM user_borrowed_books WHERE userId = ? AND bookId = ?',
+            [record.userId, record.bookId]
+          );
+          
+          // If no record exists in user_borrowed_books, add it
+          if (existingRecords.length === 0) {
+            log(`Adding missing user_borrowed_books record for userId: ${record.userId}, bookId: ${record.bookId}`);
+            await connection.query(
+              'INSERT INTO user_borrowed_books (userId, bookId) VALUES (?, ?)',
+              [record.userId, record.bookId]
+            );
+          }
+        } catch (userBorrowedBooksError) {
+          log(`Warning: Could not update user_borrowed_books: ${userBorrowedBooksError.message}`);
+          // Continue even if this fails
+        }
+        
+        // Lock user account
+        await connection.query(
+          'UPDATE users SET isBlocked = TRUE, blockReason = ? WHERE id = ?',
+          [`Account locked due to overdue book (ID: ${record.bookId})`, record.userId]
+        );
+        log(`Blocked user account with ID: ${record.userId}`);
+        
+        try {
+          // Create a notification for the user (only if one doesn't already exist)
+          const [existingNotifications] = await connection.query(
+            'SELECT * FROM notifications WHERE userId = ? AND type = "overdue" AND `read` = 0 LIMIT 1',
+            [record.userId]
+          );
+          
+          if (existingNotifications.length === 0) {
+            await connection.query(
+              'INSERT INTO notifications (userId, title, message, date, `read`, type) VALUES (?, ?, ?, ?, ?, ?)',
+              [
+                record.userId, 
+                'Sách quá hạn - Tài khoản bị khóa', 
+                `Tài khoản của bạn đã bị khóa do sách mượn quá hạn. Vui lòng trả sách và liên hệ thủ thư để mở khóa tài khoản.`, 
+                formattedCurrentDate, 
+                0, 
+                'overdue'
+              ]
+            );
+            log(`Created notification for user ID: ${record.userId}`);
+          }
+        } catch (notificationError) {
+          log(`Warning: Could not create notification: ${notificationError.message}`);
+          // Continue even if this fails
+        }
+      }
+      
+      await connection.commit();
+      log('Overdue book check completed');
+      return overdueRecords.length;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    log(`Error checking overdue books: ${error.message}`);
+    log(`Stack trace: ${error.stack}`);
+    return 0;
+  }
+};
+
+// Run the check every hour
+const OVERDUE_CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
+setInterval(checkOverdueBooks, OVERDUE_CHECK_INTERVAL);
+
+// Manual trigger for checking overdue books
+app.post('/api/admin/check-overdue', async (req, res) => {
+  try {
+    const overdueCount = await checkOverdueBooks();
+    res.json({ message: `Checked for overdue books. Found and processed ${overdueCount} overdue records.` });
+  } catch (error) {
+    console.error('Error running overdue check:', error);
+    res.status(500).json({ error: 'Failed to check overdue books' });
   }
 });
 

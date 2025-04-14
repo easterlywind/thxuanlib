@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
@@ -84,9 +83,32 @@ const Books = () => {
       return;
     }
     
+    // For quantity changes, check and update available quantity accordingly
+    if (name === 'quantity') {
+      const newQuantity = parseInt(value, 10) || 0;
+      const currentQuantity = selectedBook?.quantity || 0;
+      const currentAvailable = selectedBook?.availableQuantity || 0;
+      const borrowedCount = currentQuantity - currentAvailable;
+      
+      // Allow changing the quantity freely, but show warning if it's below borrowed count
+      const newAvailableQuantity = Math.max(0, newQuantity - borrowedCount);
+      
+      setFormData(prev => ({
+        ...prev,
+        quantity: newQuantity,
+        availableQuantity: newAvailableQuantity
+      }));
+      
+      // Warning if quantity is below borrowed count, but still allow editing
+      if (newQuantity < borrowedCount) {
+        toast.error(`Cảnh báo: Số lượng không thể nhỏ hơn ${borrowedCount} (số sách đang được mượn)`);
+      }
+      return;
+    }
+    
     setFormData(prev => ({
       ...prev,
-      [name]: name === 'publishYear' || name === 'quantity' ? 
+      [name]: name === 'publishYear' ? 
         parseInt(value, 10) : value
     }));
   };
@@ -166,6 +188,17 @@ const Books = () => {
       setIsSubmitting(false);
       return;
     }
+    
+    // Validate quantity against borrowed books
+    const currentQuantity = selectedBook?.quantity || 0;
+    const currentAvailable = selectedBook?.availableQuantity || 0;
+    const borrowedCount = currentQuantity - currentAvailable;
+    
+    if ((formData.quantity || 0) < borrowedCount) {
+      toast.error(`Không thể giảm số lượng xuống dưới ${borrowedCount} (số sách đang được mượn)`);
+      setIsSubmitting(false);
+      return;
+    }
 
     try {
       // Upload image if selected
@@ -177,7 +210,7 @@ const Books = () => {
         coverImage = uploadResponse.data.imageUrl;
       }
 
-      // Update book
+      // Update book - include availableQuantity in the API call
       const response = await axios.put(`http://localhost:5000/api/books/${selectedBook.id}`, {
         isbn: formData.isbn,
         title: formData.title,
@@ -186,6 +219,7 @@ const Books = () => {
         category: formData.category,
         publisher: formData.publisher,
         quantity: formData.quantity,
+        availableQuantity: formData.availableQuantity,
         coverImage: coverImage || selectedBook.coverImage
       });
 

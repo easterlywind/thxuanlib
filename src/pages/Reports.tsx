@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import * as XLSX from 'xlsx';
@@ -41,7 +40,6 @@ import {
   FileText 
 } from 'lucide-react';
 import { Book, User, BorrowRecord } from '@/types';
-import { MOCK_BOOKS, MOCK_USERS, MOCK_BORROW_RECORDS } from '@/mock/data';
 import { toast } from 'sonner';
 
 enum ReportType {
@@ -87,7 +85,7 @@ const Reports = () => {
   const borrowedBooks = totalBooks - availableBooks;
 
   // Calculate categories data for charts
-  const categoriesData = MOCK_BOOKS.reduce((acc, book) => {
+  const categoriesData = books.reduce((acc, book) => {
     if (!acc[book.category]) {
       acc[book.category] = {
         category: book.category,
@@ -105,182 +103,173 @@ const Reports = () => {
   const categoriesChartData = Object.values(categoriesData);
 
   // Calculate borrow status
-  const borrowedRecords = MOCK_BORROW_RECORDS.filter(record => record.status === 'borrowed');
-  const returnedRecords = MOCK_BORROW_RECORDS.filter(record => record.status === 'returned');
-  const overdueRecords = MOCK_BORROW_RECORDS.filter(record => {
+  const borrowedRecords = borrowRecords.filter(record => record.status === 'borrowed');
+  const returnedRecords = borrowRecords.filter(record => record.status === 'returned');
+  const overdueRecords = borrowRecords.filter(record => {
+    // Tìm cả sách có trạng thái "overdue" và sách có trạng thái "borrowed" nhưng quá hạn
+    if (record.status === 'overdue') return true;
+    
     const dueDate = new Date(record.dueDate);
     const today = new Date();
     return record.status === 'borrowed' && dueDate < today;
   });
 
+  // Ensure we're counting active borrow records correctly
+  const totalBorrowedCount = borrowRecords.filter(record => 
+    record.status === 'borrowed' || record.status === 'overdue'
+  ).length;
+  const overdueBorrowCount = overdueRecords.length;
+  const returnedBorrowCount = returnedRecords.length;
+  const normalBorrowCount = returnedBorrowCount + overdueBorrowCount;
+
   const borrowStatusData = [
-    { name: 'Đang mượn', value: borrowedRecords.length - overdueRecords.length },
-    { name: 'Quá hạn', value: overdueRecords.length },
-    { name: 'Đã trả', value: returnedRecords.length },
+    { name: 'Đang mượn', value: normalBorrowCount },
+    { name: 'Quá hạn', value: overdueBorrowCount },
+    { name: 'Đã trả', value: returnedBorrowCount },
   ];
 
   // User accounts stats
-  const totalStudents = MOCK_USERS.filter(u => u.role === 'student').length;
-  const activeStudents = MOCK_USERS.filter(u => u.role === 'student' && !u.isBlocked).length;
-  const blockedStudents = MOCK_USERS.filter(u => u.role === 'student' && u.isBlocked).length;
+  const totalStudents = users.filter(u => u.role === 'student').length;
+  const activeStudents = users.filter(u => u.role === 'student' && !u.isBlocked).length;
+  const blockedStudents = users.filter(u => u.role === 'student' && u.isBlocked).length;
 
   const userAccountsData = [
     { name: 'Đang hoạt động', value: activeStudents },
     { name: 'Bị khóa', value: blockedStudents },
   ];
 
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
-
   const handleExportReport = () => {
     try {
       let data: any[] = [];
-      let fileName = '';
+      let filename = '';
+      let sheetName = '';
 
       switch (activeReport) {
         case ReportType.BOOKS_SUMMARY:
+          // Create data for books report
           data = books.map(book => ({
-            'Mã ISBN': book.isbn,
-            'Tiêu đề': book.title,
+            'ID': book.id,
+            'Tựa sách': book.title,
             'Tác giả': book.author,
-            'Thể loại': book.category,
-            'Năm xuất bản': book.publishYear,
-            'Nhà xuất bản': book.publisher,
-            'Tổng số lượng': book.quantity,
-            'Số lượng khả dụng': book.availableQuantity,
-            'Số lượng đang mượn': book.quantity - book.availableQuantity
+            'Danh mục': book.category,
+            'ISBN': book.isbn,
+            'Số lượng': book.quantity,
+            'Còn lại': book.availableQuantity,
+            'Đang mượn': book.quantity - book.availableQuantity
           }));
-          fileName = 'bao-cao-sach.xlsx';
+          filename = 'bao-cao-sach.xlsx';
+          sheetName = 'Báo cáo sách';
           break;
 
         case ReportType.BORROW_STATUS:
+          // Enhance borrowRecords with book and user info
           data = borrowRecords.map(record => {
             const book = books.find(b => b.id === record.bookId);
-            const user = users.find(u => u.id === record.userId);
+            const borrowUser = users.find(u => u.id === record.userId);
             return {
-              'Mã sách': record.bookId,
-              'Tên sách': book?.title || '',
-              'Mã độc giả': record.userId,
-              'Tên độc giả': user?.fullName || '',
-              'Ngày mượn': new Date(record.borrowDate).toLocaleDateString('vi-VN'),
-              'Hạn trả': new Date(record.dueDate).toLocaleDateString('vi-VN'),
-              'Ngày trả': record.returnDate ? new Date(record.returnDate).toLocaleDateString('vi-VN') : '',
-              'Trạng thái': record.status === 'borrowed' ? 'Đang mượn' : 'Đã trả'
+              'ID': record.id,
+              'Sách': book?.title || 'Không rõ',
+              'ISBN': book?.isbn || 'Không rõ',
+              'Độc giả': borrowUser?.fullName || 'Không rõ',
+              'Ngày mượn': record.borrowDate,
+              'Hạn trả': record.dueDate,
+              'Ngày trả': record.returnDate || '-',
+              'Trạng thái': record.status === 'returned' ? 'Đã trả' : 
+                (new Date(record.dueDate) < new Date() ? 'Quá hạn' : 'Đang mượn')
             };
           });
-          fileName = 'bao-cao-muon-tra.xlsx';
+          filename = 'bao-cao-muon-tra.xlsx';
+          sheetName = 'Báo cáo mượn trả';
           break;
 
         case ReportType.USER_ACCOUNTS:
-          data = users
-            .filter(user => user.role === 'student')
-            .map(user => ({
-              'Mã độc giả': user.id,
-              'Họ tên': user.fullName,
-              'Tên đăng nhập': user.username,
-              'Trạng thái': user.isBlocked ? 'Bị khóa' : 'Đang hoạt động',
-              'Lý do khóa': user.blockReason || ''
-            }));
-          fileName = 'bao-cao-doc-gia.xlsx';
+          data = users.filter(u => u.role === 'student').map(user => ({
+            'ID': user.id,
+            'Họ và tên': user.fullName,
+            'Username': user.username,
+            'Trạng thái': user.isBlocked ? 'Bị khóa' : 'Đang hoạt động',
+            'Lý do khóa': user.blockReason || '-'
+          }));
+          filename = 'bao-cao-tai-khoan.xlsx';
+          sheetName = 'Báo cáo tài khoản';
           break;
       }
 
-      const ws = XLSX.utils.json_to_sheet(data);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-      XLSX.writeFile(wb, fileName);
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      XLSX.writeFile(workbook, filename);
 
-      toast.success('Báo cáo đã được tải xuống');
+      toast.success('Xuất báo cáo thành công');
     } catch (error) {
       console.error('Error exporting report:', error);
-      toast.error('Không thể xuất báo cáo. Vui lòng thử lại sau.');
+      toast.error('Lỗi khi xuất báo cáo');
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <p>Đang tải dữ liệu báo cáo...</p>
+      </div>
+    );
+  }
+
   if (!isLibrarian) {
     return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <Card className="w-full max-w-md">
-          <CardContent className="pt-6 text-center">
-            <AlertTriangle className="mx-auto h-12 w-12 text-yellow-500 mb-4" />
-            <h2 className="text-xl font-bold mb-2">Quyền truy cập bị từ chối</h2>
-            <p className="text-gray-500 mb-4">
-              Chức năng này chỉ dành cho thủ thư
-            </p>
-            <Button 
-              variant="outline" 
-              onClick={() => window.history.back()}
-            >
-              Quay lại
-            </Button>
-          </CardContent>
-        </Card>
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <AlertTriangle size={48} className="text-amber-500 mb-4" />
+        <h1 className="text-2xl font-bold">Truy cập bị từ chối</h1>
+        <p className="text-gray-500 mt-2">Bạn không có quyền xem báo cáo hệ thống.</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold">Báo cáo & Thống kê</h1>
-          <p className="text-gray-500">Xem báo cáo hoạt động của thư viện</p>
+      <div className="flex flex-col items-center justify-center text-center space-y-4 pb-6 border-b">
+        <BarChart3 size={48} className="text-library-primary" />
+        <h1 className="text-3xl font-bold">Báo cáo thống kê</h1>
+        <p className="text-gray-500 max-w-lg">
+          Xem thống kê và dữ liệu về sách, tài khoản và tình trạng mượn trả
+        </p>
+      </div>
+
+      <div className="space-y-6">
+        <div className="flex flex-wrap gap-2">
+          <Button 
+            variant={activeReport === ReportType.BOOKS_SUMMARY ? "default" : "outline"} 
+            onClick={() => setActiveReport(ReportType.BOOKS_SUMMARY)}
+            className={activeReport === ReportType.BOOKS_SUMMARY ? "bg-library-primary" : ""}
+          >
+            <BookOpen size={18} className="mr-2" />
+            Sách
+          </Button>
+          <Button 
+            variant={activeReport === ReportType.BORROW_STATUS ? "default" : "outline"} 
+            onClick={() => setActiveReport(ReportType.BORROW_STATUS)}
+            className={activeReport === ReportType.BORROW_STATUS ? "bg-library-primary" : ""}
+          >
+            <BookOpen size={18} className="mr-2" />
+            Mượn/Trả
+          </Button>
+          <Button 
+            variant={activeReport === ReportType.USER_ACCOUNTS ? "default" : "outline"} 
+            onClick={() => setActiveReport(ReportType.USER_ACCOUNTS)}
+            className={activeReport === ReportType.USER_ACCOUNTS ? "bg-library-primary" : ""}
+          >
+            <UsersIcon size={18} className="mr-2" />
+            Tài khoản
+          </Button>
         </div>
-        
-        <Button onClick={handleExportReport} variant="outline">
-          <Download size={16} className="mr-2" />
-          Xuất báo cáo
-        </Button>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className={`cursor-pointer ${activeReport === ReportType.BOOKS_SUMMARY ? 'ring-2 ring-library-primary' : ''}`}
-          onClick={() => setActiveReport(ReportType.BOOKS_SUMMARY)}>
-          <CardContent className="pt-6 flex items-center">
-            <BookOpen size={20} className="mr-4 text-library-primary" />
-            <div>
-              <h3 className="font-medium">Báo cáo số lượng sách</h3>
-              <p className="text-sm text-gray-500">
-                Tổng số sách, sách theo thể loại, sách đang được mượn
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card className={`cursor-pointer ${activeReport === ReportType.BORROW_STATUS ? 'ring-2 ring-library-primary' : ''}`}
-          onClick={() => setActiveReport(ReportType.BORROW_STATUS)}>
-          <CardContent className="pt-6 flex items-center">
-            <BarChart3 size={20} className="mr-4 text-library-primary" />
-            <div>
-              <h3 className="font-medium">Báo cáo tình trạng mượn/trả sách</h3>
-              <p className="text-sm text-gray-500">
-                Số sách đã mượn, đã trả, quá hạn
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card className={`cursor-pointer ${activeReport === ReportType.USER_ACCOUNTS ? 'ring-2 ring-library-primary' : ''}`}
-          onClick={() => setActiveReport(ReportType.USER_ACCOUNTS)}>
-          <CardContent className="pt-6 flex items-center">
-            <UsersIcon size={20} className="mr-4 text-library-primary" />
-            <div>
-              <h3 className="font-medium">Báo cáo tài khoản độc giả</h3>
-              <p className="text-sm text-gray-500">
-                Tài khoản đang hoạt động, tài khoản bị khóa
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div>
         {activeReport === ReportType.BOOKS_SUMMARY && (
           <Card>
             <CardHeader>
-              <CardTitle>Báo cáo số lượng sách</CardTitle>
+              <CardTitle>Thống kê sách</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card>
                   <CardContent className="pt-6">
                     <div className="flex justify-between items-center">
@@ -288,7 +277,7 @@ const Reports = () => {
                         <p className="text-sm text-gray-500">Tổng số sách</p>
                         <p className="text-2xl font-bold">{totalBooks}</p>
                       </div>
-                      <BookOpen size={36} className="text-gray-300" />
+                      <BookOpen size={36} className="text-library-primary" />
                     </div>
                   </CardContent>
                 </Card>
@@ -297,7 +286,7 @@ const Reports = () => {
                   <CardContent className="pt-6">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-sm text-gray-500">Sách có sẵn</p>
+                        <p className="text-sm text-gray-500">Còn lại</p>
                         <p className="text-2xl font-bold">{availableBooks}</p>
                       </div>
                       <BookOpen size={36} className="text-green-300" />
@@ -309,62 +298,98 @@ const Reports = () => {
                   <CardContent className="pt-6">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-sm text-gray-500">Sách đang mượn</p>
+                        <p className="text-sm text-gray-500">Đang mượn</p>
                         <p className="text-2xl font-bold">{borrowedBooks}</p>
                       </div>
-                      <BookOpen size={36} className="text-blue-300" />
+                      <BookOpen size={36} className="text-orange-300" />
                     </div>
                   </CardContent>
                 </Card>
               </div>
 
-              <h3 className="text-lg font-medium mb-4">Số lượng sách theo thể loại</h3>
-              
-              <div className="h-96 w-full mb-6">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={categoriesChartData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 70 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="category" 
-                      angle={-45} 
-                      textAnchor="end"
-                      height={70}
-                    />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="totalCount" name="Tổng số" fill="#0088FE" />
-                    <Bar dataKey="availableCount" name="Có sẵn" fill="#00C49F" />
-                    <Bar dataKey="borrowedCount" name="Đang mượn" fill="#FFBB28" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              <h3 className="text-lg font-medium mb-4">Chi tiết theo từng thể loại</h3>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Thể loại</TableHead>
-                      <TableHead className="text-right">Tổng số</TableHead>
-                      <TableHead className="text-right">Có sẵn</TableHead>
-                      <TableHead className="text-right">Đang mượn</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {categoriesChartData.map((item, index) => (
-                      <TableRow key={index}>
-                        <TableCell>{item.category}</TableCell>
-                        <TableCell className="text-right">{item.totalCount}</TableCell>
-                        <TableCell className="text-right">{item.availableCount}</TableCell>
-                        <TableCell className="text-right">{item.borrowedCount}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <h3 className="text-lg font-medium mb-4">Phân loại theo danh mục</h3>
+                  <div className="h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={categoriesChartData}
+                        margin={{ top: 20, right: 30, left: 20, bottom: 70 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis 
+                          dataKey="category" 
+                          angle={-45} 
+                          textAnchor="end"
+                          height={70}
+                        />
+                        <YAxis />
+                        <Tooltip 
+                          formatter={(value, name) => {
+                            const displayName = name === 'totalCount' 
+                              ? 'Tổng số' 
+                              : name === 'availableCount' 
+                                ? 'Còn lại' 
+                                : 'Đang mượn';
+                            return [value, displayName];
+                          }}
+                        />
+                        <Legend 
+                          formatter={(value) => {
+                            return value === 'totalCount' 
+                              ? 'Tổng số' 
+                              : value === 'availableCount' 
+                                ? 'Còn lại' 
+                                : 'Đang mượn';
+                          }}
+                        />
+                        <Bar dataKey="totalCount" fill="#8884d8" name="totalCount" />
+                        <Bar dataKey="availableCount" fill="#82ca9d" name="availableCount" />
+                        <Bar dataKey="borrowedCount" fill="#ffc658" name="borrowedCount" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                
+                <div>
+                  <h3 className="text-lg font-medium mb-4">Danh sách sách ít còn lại</h3>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Tên sách</TableHead>
+                          <TableHead className="text-center">Còn lại/Tổng</TableHead>
+                          <TableHead className="text-right">Tỷ lệ</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {books.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={3} className="text-center py-4 text-gray-500">
+                              Chưa có dữ liệu sách
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          [...books]
+                            .filter(book => book.quantity > 0) // Only books with quantity > 0
+                            .sort((a, b) => (a.availableQuantity / a.quantity) - (b.availableQuantity / b.quantity))
+                            .slice(0, 5)
+                            .map((book) => (
+                              <TableRow key={book.id}>
+                                <TableCell>{book.title}</TableCell>
+                                <TableCell className="text-center">
+                                  {book.availableQuantity}/{book.quantity}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {((book.availableQuantity / book.quantity) * 100).toFixed(0)}%
+                                </TableCell>
+                              </TableRow>
+                            ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
               </div>
             </CardContent>
             <CardFooter className="border-t pt-4">
@@ -379,18 +404,18 @@ const Reports = () => {
         {activeReport === ReportType.BORROW_STATUS && (
           <Card>
             <CardHeader>
-              <CardTitle>Báo cáo tình trạng mượn/trả sách</CardTitle>
+              <CardTitle>Thống kê mượn trả</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card>
                   <CardContent className="pt-6">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-sm text-gray-500">Sách đang mượn</p>
-                        <p className="text-2xl font-bold">{borrowedRecords.length}</p>
+                        <p className="text-sm text-gray-500">Đang mượn</p>
+                        <p className="text-2xl font-bold">{normalBorrowCount}</p>
                       </div>
-                      <BookOpen size={36} className="text-blue-300" />
+                      <BookOpen size={36} className="text-library-primary" />
                     </div>
                   </CardContent>
                 </Card>
@@ -399,22 +424,22 @@ const Reports = () => {
                   <CardContent className="pt-6">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-sm text-gray-500">Sách đã trả</p>
-                        <p className="text-2xl font-bold">{returnedRecords.length}</p>
+                        <p className="text-sm text-gray-500">Quá hạn</p>
+                        <p className="text-2xl font-bold">{overdueBorrowCount}</p>
+                      </div>
+                      <AlertTriangle size={36} className="text-amber-300" />
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-sm text-gray-500">Đã trả</p>
+                        <p className="text-2xl font-bold">{returnedBorrowCount}</p>
                       </div>
                       <BookOpen size={36} className="text-green-300" />
-                    </div>
-                  </CardContent>
-                </Card>
-                
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="text-sm text-gray-500">Sách quá hạn</p>
-                        <p className="text-2xl font-bold">{overdueRecords.length}</p>
-                      </div>
-                      <BookOpen size={36} className="text-red-300" />
                     </div>
                   </CardContent>
                 </Card>
@@ -422,7 +447,7 @@ const Reports = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <h3 className="text-lg font-medium mb-4">Biểu đồ tình trạng mượn/trả sách</h3>
+                  <h3 className="text-lg font-medium mb-4">Biểu đồ trạng thái mượn trả</h3>
                   <div className="h-80">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
@@ -436,9 +461,9 @@ const Reports = () => {
                           dataKey="value"
                           label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                         >
-                          {borrowStatusData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
+                          <Cell fill="#4f46e5" />
+                          <Cell fill="#f59e0b" />
+                          <Cell fill="#10b981" />
                         </Pie>
                         <Tooltip />
                         <Legend />
@@ -453,32 +478,30 @@ const Reports = () => {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>ID</TableHead>
                           <TableHead>Tên sách</TableHead>
-                          <TableHead>Độc giả</TableHead>
+                          <TableHead>Người mượn</TableHead>
                           <TableHead className="text-right">Quá hạn (ngày)</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {overdueRecords.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={4} className="text-center py-4 text-gray-500">
+                            <TableCell colSpan={3} className="text-center py-4 text-gray-500">
                               Không có sách nào quá hạn
                             </TableCell>
                           </TableRow>
                         ) : (
                           overdueRecords.slice(0, 5).map((record) => {
-                            const book = MOCK_BOOKS.find(b => b.id === record.bookId);
-                            const borrower = MOCK_USERS.find(u => u.id === record.userId);
-                            const dueDate = new Date(record.dueDate);
-                            const today = new Date();
-                            const daysOverdue = Math.ceil((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+                            const book = books.find(b => b.id === record.bookId);
+                            const borrowUser = users.find(u => u.id === record.userId);
+                            const daysOverdue = Math.ceil(
+                              (new Date().getTime() - new Date(record.dueDate).getTime()) / (1000 * 3600 * 24)
+                            );
                             
                             return (
                               <TableRow key={record.id}>
-                                <TableCell>{record.id}</TableCell>
-                                <TableCell>{book?.title}</TableCell>
-                                <TableCell>{borrower?.fullName}</TableCell>
+                                <TableCell>{book?.title || 'Không rõ'}</TableCell>
+                                <TableCell>{borrowUser?.fullName || 'Không rõ'}</TableCell>
                                 <TableCell className="text-right text-red-500">
                                   {daysOverdue} ngày
                                 </TableCell>
@@ -504,22 +527,10 @@ const Reports = () => {
         {activeReport === ReportType.USER_ACCOUNTS && (
           <Card>
             <CardHeader>
-              <CardTitle>Báo cáo tài khoản độc giả</CardTitle>
+              <CardTitle>Thống kê tài khoản</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="text-sm text-gray-500">Tổng số độc giả</p>
-                        <p className="text-2xl font-bold">{totalStudents}</p>
-                      </div>
-                      <UsersIcon size={36} className="text-gray-300" />
-                    </div>
-                  </CardContent>
-                </Card>
-                
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Card>
                   <CardContent className="pt-6">
                     <div className="flex justify-between items-center">
@@ -590,7 +601,7 @@ const Reports = () => {
                             </TableCell>
                           </TableRow>
                         ) : (
-                          MOCK_USERS.filter(u => u.role === 'student' && u.isBlocked).map((user) => (
+                          users.filter(u => u.role === 'student' && u.isBlocked).map((user) => (
                             <TableRow key={user.id}>
                               <TableCell>{user.id}</TableCell>
                               <TableCell>{user.fullName}</TableCell>

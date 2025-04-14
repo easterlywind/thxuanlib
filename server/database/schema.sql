@@ -50,7 +50,6 @@ CREATE TABLE borrow_records (
   FOREIGN KEY (userId) REFERENCES users(id)
 );
 
-
 -- Create notifications table
 CREATE TABLE notifications (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -58,7 +57,7 @@ CREATE TABLE notifications (
   title VARCHAR(100) NOT NULL,
   message TEXT NOT NULL,
   date DATETIME NOT NULL,
-  read BOOLEAN DEFAULT FALSE,
+  `read` BOOLEAN DEFAULT FALSE,
   type ENUM('return_reminder', 'book_available', 'overdue', 'system') NOT NULL,
   createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (userId) REFERENCES users(id)
@@ -80,6 +79,17 @@ CREATE TABLE book_reservations (
   FOREIGN KEY (userId) REFERENCES users(id)
 );
 
+-- Create user_borrowed_books table for tracking currently borrowed books
+CREATE TABLE user_borrowed_books (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  userId INT NOT NULL,
+  bookId INT NOT NULL,
+  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (userId) REFERENCES users(id),
+  FOREIGN KEY (bookId) REFERENCES books(id),
+  UNIQUE KEY unique_user_book (userId, bookId)
+);
+
 -- Indexes for better performance
 CREATE INDEX idx_books_category ON books(category);
 CREATE INDEX idx_users_role ON users(role);
@@ -88,3 +98,5 @@ CREATE INDEX idx_notifications_userId ON notifications(userId);
 CREATE INDEX idx_book_reservations_status ON book_reservations(status);
 CREATE INDEX idx_book_reservations_bookId ON book_reservations(bookId);
 CREATE INDEX idx_book_reservations_userId ON book_reservations(userId);
+CREATE INDEX idx_user_borrowed_books_userId ON user_borrowed_books(userId);
+CREATE INDEX idx_user_borrowed_books_bookId ON user_borrowed_books(bookId);
