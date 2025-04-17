@@ -45,7 +45,7 @@ const BorrowReturn = () => {
   const [bookISBN, setBookISBN] = useState('');
   const [currentBook, setCurrentBook] = useState<Book | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
-  const [userBorrowRecords, setUserBorrowRecords] = useState<(BorrowRecord & { bookTitle?: string })[]>([]);
+  const [userBorrowRecords, setUserBorrowRecords] = useState<(BorrowRecord & { bookTitle?: string; bookIsbn?: string })[]>([]);
   const [userReservations, setUserReservations] = useState<BookReservation[]>([]);
   const [booksData, setBooksData] = useState<Book[]>([]);
 
@@ -96,7 +96,8 @@ const BorrowReturn = () => {
         const book = allBooks.find(b => b.id === record.bookId);
         return {
           ...record,
-          bookTitle: book?.title
+          bookTitle: book?.title,
+          bookIsbn: book?.isbn
         };
       });
       
@@ -342,6 +343,15 @@ const BorrowReturn = () => {
     }
   };
 
+  const handleCancelConfirm = () => {
+    // Keep the current user and just go back to book input
+    setMode(BorrowReturnMode.BOOK_INPUT);
+    setCurrentBook(null);
+    setBookISBN('');
+    setErrorMessage('');
+    setIsReserving(false);
+  };
+
   const resetState = () => {
     setMode(BorrowReturnMode.IDLE);
     setCurrentUser(null);
@@ -442,11 +452,27 @@ const BorrowReturn = () => {
                     <h4 className="font-medium mb-2">Sách đang mượn:</h4>
                     <ul className="space-y-2">
                       {userBorrowRecords.map(record => (
-                        <li key={record.id} className="text-sm flex justify-between">
-                          <span>{record.bookTitle || `Sách #${record.bookId}`}</span>
-                          <span className="text-gray-500">
-                            Hạn trả: {new Date(record.dueDate).toLocaleDateString('vi-VN')}
-                          </span>
+                        <li key={record.id} className="text-sm">
+                          <div className="flex justify-between mb-1">
+                            <span>{record.bookTitle || `Sách #${record.bookId}`}</span>
+                            <span className="text-gray-500">
+                              Hạn trả: {new Date(record.dueDate).toLocaleDateString('vi-VN')}
+                            </span>
+                          </div>
+                          {record.bookIsbn && (
+                            <div className="text-gray-600 text-xs flex items-center">
+                              <span>ISBN: </span>
+                              <code className="bg-gray-100 px-1 py-0.5 rounded ml-1 cursor-pointer" 
+                                    onClick={() => {
+                                      setBookISBN(record.bookIsbn || "");
+                                      navigator.clipboard.writeText(record.bookIsbn || "")
+                                        .then(() => toast.success("Đã sao chép ISBN vào clipboard"))
+                                        .catch(err => console.error("Không thể sao chép:", err));
+                                    }}>
+                                {record.bookIsbn}
+                              </code>
+                            </div>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -556,7 +582,7 @@ const BorrowReturn = () => {
               <Button 
                 variant="outline" 
                 className="flex-1"
-                onClick={resetState}
+                onClick={handleCancelConfirm}
               >
                 Hủy
               </Button>
@@ -575,8 +601,11 @@ const BorrowReturn = () => {
       <Dialog 
         open={mode === BorrowReturnMode.SCANNING} 
         onOpenChange={(open) => {
-          if (!open) {
-            console.log('Dialog closing, currentUser:', currentUser);
+          if (!open && mode === BorrowReturnMode.SCANNING) {
+            // Only reset to IDLE if we're still in SCANNING mode
+            // If a successful scan happened, mode would have already changed to BOOK_INPUT
+            console.log('Dialog closing without successful scan, currentUser:', currentUser);
+            setMode(BorrowReturnMode.IDLE);
           }
         }} 
         modal={true}>
@@ -599,6 +628,8 @@ const BorrowReturn = () => {
               }} 
               onClose={() => {
                 console.log('Scanner closed, currentUser:', currentUser);
+                // We don't need to set mode to IDLE here anymore
+                // The dialog's onOpenChange will handle this conditionally
               }}
             />
           </div>

@@ -1,9 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import jsQR from 'jsqr';
 import { toast } from 'sonner';
-import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button'; // Assuming you have a Button component
+import { Button } from '@/components/ui/button';
 
 interface QRScannerProps {
   onScan: (data: string) => void;
@@ -11,7 +9,6 @@ interface QRScannerProps {
 }
 
 const QRScanner = ({ onScan, onClose }: QRScannerProps): JSX.Element => {
-  const navigate = useNavigate();
   const [scanning, setScanning] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -116,11 +113,9 @@ const QRScanner = ({ onScan, onClose }: QRScannerProps): JSX.Element => {
           toast.success('Quét mã QR thành công');
           
           // Call onScan callback with the data FIRST
-          // Let the parent component process the data before dialog closes
           onScan(code.data);
           
           // Process the data with parent component first, then close
-          // The delay is longer to ensure UI updates complete first
           setTimeout(() => {
             onClose();
           }, 800);
@@ -137,7 +132,7 @@ const QRScanner = ({ onScan, onClose }: QRScannerProps): JSX.Element => {
       console.error('Error processing frame:', error);
       toast.error('Lỗi khi xử lý hình ảnh');
     }
-  }, [scanning, onScan, navigate]);
+  }, [scanning, onScan, onClose]);
 
   const startScanning = useCallback(async () => {
     if (!cameraReady) {
@@ -178,45 +173,36 @@ const QRScanner = ({ onScan, onClose }: QRScannerProps): JSX.Element => {
   }, [scanning, cameraReady, scan]);
 
   return (
-    <Dialog open={true} onOpenChange={cleanup} modal={true}>
-      <DialogContent 
-        className="sm:max-w-md" 
-        aria-describedby="qr-scanner-desc"
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
-        <div className="flex flex-col items-center">
-          <DialogTitle>Quét mã QR</DialogTitle>
-          <p id="qr-scanner-desc" className="text-sm text-gray-500 mb-4">
-            Đưa mã QR vào khung hình để quét. Đảm bảo mã QR nằm trong vùng quét và đủ ánh sáng.
-          </p>
-          <div className="relative w-full aspect-square bg-gray-100 rounded-lg overflow-hidden">
-            <video
-              ref={videoRef}
-              className="absolute inset-0 w-full h-full object-cover"
-              playsInline
-              style={{ display: scanning || cameraReady ? 'block' : 'none' }}
-            />
-            <canvas
-              ref={canvasRef}
-              className="absolute inset-0 w-full h-full object-cover"
-              style={{ display: 'none' }}
-            />
-            {!scanning && !cameraReady && (
-              <div className="absolute inset-0 flex items-center justify-center text-gray-500">
-                Nhấn nút bên dưới để bắt đầu quét
-              </div>
-            )}
+    <div className="flex flex-col items-center">
+      <p id="qr-scanner-desc" className="text-sm text-gray-500 mb-4">
+        Đưa mã QR vào khung hình để quét. Đảm bảo mã QR nằm trong vùng quét và đủ ánh sáng.
+      </p>
+      <div className="relative w-full aspect-square bg-gray-100 rounded-lg overflow-hidden">
+        <video
+          ref={videoRef}
+          className="absolute inset-0 w-full h-full object-cover"
+          playsInline
+          style={{ display: scanning || cameraReady ? 'block' : 'none' }}
+        />
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 w-full h-full object-cover"
+          style={{ display: 'none' }}
+        />
+        {!scanning && !cameraReady && (
+          <div className="absolute inset-0 flex items-center justify-center text-gray-500">
+            Nhấn nút bên dưới để bắt đầu quét
           </div>
-          <Button
-            onClick={startScanning}
-            disabled={scanning}
-            className="mt-4"
-          >
-            {scanning ? 'Đang quét...' : 'Bắt đầu quét'}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+        )}
+      </div>
+      <Button
+        onClick={startScanning}
+        disabled={scanning}
+        className="mt-4"
+      >
+        {scanning ? 'Đang quét...' : 'Bắt đầu quét'}
+      </Button>
+    </div>
   );
 };
 
