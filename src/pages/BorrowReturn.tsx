@@ -230,8 +230,7 @@ const BorrowReturn = () => {
         // Xử lý đặt trước sách khi hết số lượng
         try {
           // Kiểm tra xem người dùng đã đặt trước cuốn sách này chưa
-          const existingReservations = await reservationApi.getUserReservations(currentUser.id);
-          const alreadyReserved = existingReservations.find(
+          const alreadyReserved = userReservations.find(
             res => res.bookId === currentBook.id && (res.status === 'pending')
           );
           
