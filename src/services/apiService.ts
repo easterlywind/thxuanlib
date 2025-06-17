@@ -1,6 +1,6 @@
 import { Book, User, BorrowRecord, Notification, BookReservation } from '@/types';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 // Generic fetch function with error handling
 const fetchData = async <T>(endpoint: string, options?: RequestInit): Promise<T> => {

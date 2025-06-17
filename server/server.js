@@ -6,9 +6,9 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcrypt');
 
-// Setup logging
+// Thiết lập ghi log
 const logFile = fs.createWriteStream(path.join(__dirname, 'server.log'), { flags: 'a' });
-const log = (message) => {
+const log = (message) => { // Hàm ghi log
   const timestamp = new Date().toISOString();
   const logMessage = `${timestamp}: ${message}\n`;
   console.log(logMessage);
@@ -18,49 +18,36 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'; // Default to Vite's development server port
 
-// Create uploads directory if it doesn't exist
+// Tạo thư mục uploads nếu chưa tồn tại
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+  origin: frontendUrl,
+  credentials: true
+})); // Cấu hình CORS cho môi trường production
+app.use(express.json()); // Phân tích dữ liệu JSON trong yêu cầu
 
-// Utility function to compare password with hashed version
-const comparePassword = async (plainPassword, hashedPassword) => {
-  // For simplicity, we'll use a basic comparison during development
-  // In production, you should use proper bcrypt or similar
-  if (hashedPassword.startsWith('$2b$')) {
-    try {
-      return await bcrypt.compare(plainPassword, hashedPassword);
-    } catch (error) {
-      log(`Error comparing passwords: ${error.message}`);
-      return false;
-    }
-  } else {
-    // For testing - if password is stored in plain text, direct comparison
-    return plainPassword === hashedPassword;
-  }
-};
-
-// Utility function to format dates to MySQL format (YYYY-MM-DD HH:MM:SS)
-const formatDate = (dateString) => {
+// Hàm chuyển định dạng ngày sang MySQL
+const formatDate = (dateString) => { // Định dạng ngày
   const date = new Date(dateString);
   return date.toISOString().slice(0, 19).replace('T', ' ');
 };
 
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'))); // Cung cấp file tĩnh từ thư mục uploads
 
-// Configure multer for image upload
+// Cấu hình multer để tải ảnh
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, path.join(__dirname, '..', 'uploads'))
   },
   filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname))
+    cb(null, Date.now() + path.extname(file.originalname)) // Tên file dựa trên thời gian
   }
 });
 
@@ -73,13 +60,13 @@ const upload = multer({
     cb(null, true);
   }
 });
-app.use((req, res, next) => {
+app.use((req, res, next) => { // Ghi log yêu cầu
   log(`${req.method} ${req.url} - Body: ${JSON.stringify(req.body)}`);
   next();
 });
 
-// Database connection pool
-const pool = mysql.createPool({
+// Kết nối CSDL với pool
+const pool = mysql.createPool({ // Thiết lập kết nối MySQL
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
@@ -89,8 +76,8 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
-// Test database connection
-app.get('/api/test', async (req, res) => {
+// Kiểm tra kết nối CSDL
+app.get('/api/test', async (req, res) => { // Kiểm tra kết nối
   try {
     const connection = await pool.getConnection();
     connection.release();
@@ -101,8 +88,8 @@ app.get('/api/test', async (req, res) => {
   }
 });
 
-// Authentication endpoint
-app.post('/api/auth/login', async (req, res) => {
+// Đăng nhập
+app.post('/api/auth/login', async (req, res) => { // Xác thực người dùng
   const { username, password } = req.body;
   
   if (!username || !password) {
@@ -111,8 +98,7 @@ app.post('/api/auth/login', async (req, res) => {
   
   try {
     log(`Login attempt: ${username}`);
-    // Find user by username
-    const [users] = await pool.query('SELECT * FROM users WHERE username = ?', [username]);
+    const [users] = await pool.query('SELECT * FROM users WHERE username = ?', [username]); // Tìm người dùng
     
     if (users.length === 0) {
       log(`Login failed: User ${username} not found`);
@@ -120,9 +106,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
     
     const user = users[0];
-    
-    // Verify password (basic comparison for now)
-    const passwordValid = password === user.password;
+    const passwordValid = password === user.password; // Kiểm tra mật khẩu
     log(`Password valid: ${passwordValid}`);
     
     if (!passwordValid) {
@@ -130,8 +114,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Check if user account is blocked
-    if (user.isBlocked) {
+    if (user.isBlocked) { // Kiểm tra tài khoản bị khóa
       log(`Login failed: User ${username} account is blocked`);
       return res.status(403).json({ 
         error: 'Account is blocked', 
@@ -139,8 +122,7 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
     
-    // Remove password from response
-    const { password: _, ...userWithoutPassword } = user;
+    const { password: _, ...userWithoutPassword } = user; 
     
     log(`User ${username} logged in successfully`);
     res.json({ 
@@ -154,8 +136,8 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Book endpoints
-app.get('/api/books', async (req, res) => {
+// Quản lý sách
+app.get('/api/books', async (req, res) => { // Lấy danh sách sách
   try {
     const [rows] = await pool.query('SELECT * FROM books');
     res.json(rows);
@@ -165,7 +147,7 @@ app.get('/api/books', async (req, res) => {
   }
 });
 
-app.post('/api/books', async (req, res) => {
+app.post('/api/books', async (req, res) => { // Thêm sách mới
   try {
     const { isbn, title, author, publishYear, category, publisher, quantity, coverImage } = req.body;
     const [result] = await pool.query(
@@ -179,14 +161,12 @@ app.post('/api/books', async (req, res) => {
   }
 });
 
-app.put('/api/books/:id', async (req, res) => {
+app.put('/api/books/:id', async (req, res) => { // Cập nhật sách
   try {
-    // Create update query dynamically based on provided fields
     const updateFields = [];
     const values = [];
     
-    // Add each provided field to the update query
-    Object.entries(req.body).forEach(([key, value]) => {
+    Object.entries(req.body).forEach(([key, value]) => { // Tạo truy vấn động
       updateFields.push(`${key} = ?`);
       values.push(value);
     });
@@ -195,10 +175,8 @@ app.put('/api/books/:id', async (req, res) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
     
-    // Add the ID as the last parameter
     values.push(req.params.id);
     
-    // Construct and execute the query
     const query = `UPDATE books SET ${updateFields.join(', ')} WHERE id = ?`;
     log(`Update book query: ${query}, values: ${JSON.stringify(values)}`);
     
@@ -210,7 +188,7 @@ app.put('/api/books/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/books/:id', async (req, res) => {
+app.delete('/api/books/:id', async (req, res) => { // Xóa sách
   try {
     await pool.query('DELETE FROM books WHERE id = ?', [req.params.id]);
     res.json({ message: 'Book deleted successfully' });
@@ -220,8 +198,8 @@ app.delete('/api/books/:id', async (req, res) => {
   }
 });
 
-// User endpoints
-app.get('/api/users', async (req, res) => {
+// Quản lý người dùng
+app.get('/api/users', async (req, res) => { // Lấy danh sách người dùng
   try {
     const [rows] = await pool.query('SELECT * FROM users');
     res.json(rows);
@@ -231,7 +209,7 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-app.get('/api/users/:id', async (req, res) => {
+app.get('/api/users/:id', async (req, res) => { // Lấy thông tin người dùng theo ID
   try {
     const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [req.params.id]);
     if (rows.length === 0) {
@@ -244,7 +222,7 @@ app.get('/api/users/:id', async (req, res) => {
   }
 });
 
-app.put('/api/users/:id/block', async (req, res) => {
+app.put('/api/users/:id/block', async (req, res) => { // Khóa/mở khóa người dùng
   try {
     const { isBlocked, blockReason } = req.body;
     await pool.query(
@@ -258,8 +236,8 @@ app.put('/api/users/:id/block', async (req, res) => {
   }
 });
 
-// Borrow records endpoints
-app.get('/api/borrow-records', async (req, res) => {
+// Quản lý mượn sách
+app.get('/api/borrow-records', async (req, res) => { // Lấy danh sách mượn sách
   try {
     const [rows] = await pool.query('SELECT * FROM borrow_records');
     res.json(rows);
@@ -269,50 +247,42 @@ app.get('/api/borrow-records', async (req, res) => {
   }
 });
 
-app.post('/api/borrow-records', async (req, res) => {
+app.post('/api/borrow-records', async (req, res) => { // Tạo bản ghi mượn sách
   try {
     const { bookId, userId, borrowDate, dueDate, status } = req.body;
     
-    // Start a transaction
     const connection = await pool.getConnection();
-    await connection.beginTransaction();
+    await connection.beginTransaction(); // Bắt đầu giao dịch
     
     try {
-      // Format dates to MySQL format
       const formattedBorrowDate = formatDate(borrowDate);
       const formattedDueDate = formatDate(dueDate);
       
       log(`Formatted borrow date: ${formattedBorrowDate}, due date: ${formattedDueDate}`);
       
-      // Create borrow record
       const [result] = await connection.query(
         'INSERT INTO borrow_records (bookId, userId, borrowDate, dueDate, status) VALUES (?, ?, ?, ?, ?)',
         [bookId, userId, formattedBorrowDate, formattedDueDate, status]
       );
       
-      // Update available quantity
       await connection.query(
-        'UPDATE books SET availableQuantity = availableQuantity - 1 WHERE id = ?',
+        'UPDATE books SET availableQuantity = availableQuantity - 1 WHERE id = ?', // Giảm số lượng sách
         [bookId]
       );
       
-      // Check if user_borrowed_books table exists before inserting
       try {
-        // Update user's borrowed books
         await connection.query(
-          'INSERT INTO user_borrowed_books (userId, bookId) VALUES (?, ?)',
+          'INSERT INTO user_borrowed_books (userId, bookId) VALUES (?, ?)', // Cập nhật sách người dùng mượn
           [userId, bookId]
         );
       } catch (tableError) {
-        // If table doesn't exist, log the error but don't fail the transaction
         log(`Warning: Could not update user_borrowed_books: ${tableError.message}`);
-        // This table may not exist, but we can continue with the transaction
       }
       
-      await connection.commit();
+      await connection.commit(); // Xác nhận giao dịch
       res.status(201).json({ id: result.insertId, ...req.body });
     } catch (error) {
-      await connection.rollback();
+      await connection.rollback(); // Hủy giao dịch nếu lỗi
       throw error;
     } finally {
       connection.release();
@@ -325,18 +295,16 @@ app.post('/api/borrow-records', async (req, res) => {
   }
 });
 
-app.put('/api/borrow-records/:id/return', async (req, res) => {
+app.put('/api/borrow-records/:id/return', async (req, res) => { // Trả sách
   try {
     const { returnDate } = req.body;
     
-    // Start a transaction
     const connection = await pool.getConnection();
     await connection.beginTransaction();
     
     try {
-      // Get the borrow record
       const [records] = await connection.query(
-        'SELECT * FROM borrow_records WHERE id = ?',
+        'SELECT * FROM borrow_records WHERE id = ?', // Lấy bản ghi mượn
         [req.params.id]
       );
       
@@ -347,25 +315,21 @@ app.put('/api/borrow-records/:id/return', async (req, res) => {
       
       const record = records[0];
       
-      // Format return date to MySQL format
       const formattedReturnDate = formatDate(returnDate);
       log(`Formatted return date: ${formattedReturnDate}`);
       
-      // Update borrow record
       await connection.query(
-        'UPDATE borrow_records SET returnDate = ?, status = "returned" WHERE id = ?',
+        'UPDATE borrow_records SET returnDate = ?, status = "returned" WHERE id = ?', // Cập nhật trạng thái trả
         [formattedReturnDate, req.params.id]
       );
       
-      // Update available quantity
       await connection.query(
-        'UPDATE books SET availableQuantity = availableQuantity + 1 WHERE id = ?',
+        'UPDATE books SET availableQuantity = availableQuantity + 1 WHERE id = ?', // Tăng số lượng sách
         [record.bookId]
       );
       
-      // Remove from user's borrowed books
       await connection.query(
-        'DELETE FROM user_borrowed_books WHERE userId = ? AND bookId = ?',
+        'DELETE FROM user_borrowed_books WHERE userId = ? AND bookId = ?', // Xóa bản ghi mượn
         [record.userId, record.bookId]
       );
       
@@ -383,8 +347,8 @@ app.put('/api/borrow-records/:id/return', async (req, res) => {
   }
 });
 
-// Image upload endpoint
-app.post('/api/upload', upload.single('image'), (req, res) => {
+// Tải ảnh
+app.post('/api/upload', upload.single('image'), (req, res) => { // Tải ảnh bìa sách
   log('Upload request received');
   log(`Files: ${JSON.stringify(req.files)}`);
   log(`File: ${JSON.stringify(req.file)}`);
@@ -397,8 +361,8 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
   res.json({ imageUrl });
 });
 
-// Change password endpoint
-app.put('/api/users/:id/change-password', async (req, res) => {
+// Đổi mật khẩu
+app.put('/api/users/:id/change-password', async (req, res) => { // Đổi mật khẩu người dùng
   try {
     const { currentPassword, newPassword } = req.body;
     log(`Attempting password change for user: ${req.params.id}`);
@@ -411,9 +375,8 @@ app.put('/api/users/:id/change-password', async (req, res) => {
       return res.status(400).json({ error: 'New password must be at least 6 characters long' });
     }
     
-    // Get user's current password hash
     const [users] = await pool.query(
-      'SELECT * FROM users WHERE id = ?',
+      'SELECT * FROM users WHERE id = ?', // Lấy thông tin người dùng
       [req.params.id]
     );
     
@@ -425,17 +388,15 @@ app.put('/api/users/:id/change-password', async (req, res) => {
     const user = users[0];
     log(`Found user: ${user.username}`);
     
-    // Verify current password (plaintext comparison for now)
-    const isPasswordValid = currentPassword === user.password;
+    const isPasswordValid = currentPassword === user.password; // Kiểm tra mật khẩu hiện tại
     log(`Password valid: ${isPasswordValid}`);
     
     if (!isPasswordValid) {
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
     
-    // Update with new password (plaintext for development)
     const [result] = await pool.query(
-      'UPDATE users SET password = ? WHERE id = ?',
+      'UPDATE users SET password = ? WHERE id = ?', // Cập nhật mật khẩu mới
       [newPassword, req.params.id]
     );
     
@@ -452,8 +413,8 @@ app.put('/api/users/:id/change-password', async (req, res) => {
   }
 });
 
-// Check if book is being borrowed
-app.get('/api/borrows/check/:id', async (req, res) => {
+// Kiểm tra sách đang mượn
+app.get('/api/borrows/check/:id', async (req, res) => { // Kiểm tra sách có đang được mượn
   try {
     const [records] = await pool.query(
       'SELECT COUNT(*) as count FROM borrow_records WHERE bookId = ? AND status = "borrowed"',
@@ -466,8 +427,8 @@ app.get('/api/borrows/check/:id', async (req, res) => {
   }
 });
 
-// Reservation endpoints
-app.get('/api/reservations', async (req, res) => {
+// Quản lý đặt trước sách
+app.get('/api/reservations', async (req, res) => { // Lấy danh sách đặt trước
   try {
     const [rows] = await pool.query('SELECT * FROM book_reservations');
     res.json(rows);
@@ -477,17 +438,15 @@ app.get('/api/reservations', async (req, res) => {
   }
 });
 
-app.post('/api/reservations', async (req, res) => {
+app.post('/api/reservations', async (req, res) => { // Tạo đặt trước sách
   try {
     const { bookId, userId, reservationDate, dueDate, priority, status, notificationSent } = req.body;
     
-    // Format dates to MySQL format (YYYY-MM-DD HH:MM:SS)
-    const formatDateLocal = (dateString) => {
+    const formatDateLocal = (dateString) => { // Định dạng ngày
       const date = new Date(dateString);
       return date.toISOString().slice(0, 19).replace('T', ' ');
     };
     
-    // Format dates
     const formattedReservationDate = formatDateLocal(reservationDate);
     const formattedDueDate = dueDate ? formatDateLocal(dueDate) : null;
     
@@ -503,7 +462,7 @@ app.post('/api/reservations', async (req, res) => {
   }
 });
 
-app.get('/api/reservations/user/:userId', async (req, res) => {
+app.get('/api/reservations/user/:userId', async (req, res) => { // Lấy đặt trước của người dùng
   try {
     const [rows] = await pool.query(
       'SELECT * FROM book_reservations WHERE userId = ?',
@@ -516,7 +475,7 @@ app.get('/api/reservations/user/:userId', async (req, res) => {
   }
 });
 
-app.get('/api/reservations/book/:bookId', async (req, res) => {
+app.get('/api/reservations/book/:bookId', async (req, res) => { // Lấy đặt trước của sách
   try {
     const [rows] = await pool.query(
       'SELECT * FROM book_reservations WHERE bookId = ?',
@@ -529,7 +488,7 @@ app.get('/api/reservations/book/:bookId', async (req, res) => {
   }
 });
 
-app.put('/api/reservations/:id', async (req, res) => {
+app.put('/api/reservations/:id', async (req, res) => { // Cập nhật đặt trước
   try {
     const { status, notificationSent, priority } = req.body;
     const updates = [];
@@ -565,7 +524,6 @@ app.put('/api/reservations/:id', async (req, res) => {
       return res.status(404).json({ error: 'Reservation not found' });
     }
     
-    // Fetch the updated reservation
     const [rows] = await pool.query('SELECT * FROM book_reservations WHERE id = ?', [req.params.id]);
     res.json(rows[0]);
   } catch (error) {
@@ -574,7 +532,7 @@ app.put('/api/reservations/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/reservations/:id', async (req, res) => {
+app.delete('/api/reservations/:id', async (req, res) => { // Hủy đặt trước
   try {
     const [result] = await pool.query('DELETE FROM book_reservations WHERE id = ?', [req.params.id]);
     
@@ -589,8 +547,8 @@ app.delete('/api/reservations/:id', async (req, res) => {
   }
 });
 
-// Notifications endpoints
-app.get('/api/notifications', async (req, res) => {
+// Quản lý thông báo
+app.get('/api/notifications', async (req, res) => { // Lấy danh sách thông báo
   try {
     const [rows] = await pool.query('SELECT * FROM notifications');
     res.json(rows);
@@ -600,7 +558,7 @@ app.get('/api/notifications', async (req, res) => {
   }
 });
 
-app.get('/api/notifications/user/:userId', async (req, res) => {
+app.get('/api/notifications/user/:userId', async (req, res) => { // Lấy thông báo của người dùng
   try {
     const [rows] = await pool.query(
       'SELECT * FROM notifications WHERE userId = ? ORDER BY date DESC',
@@ -613,7 +571,7 @@ app.get('/api/notifications/user/:userId', async (req, res) => {
   }
 });
 
-app.post('/api/notifications', async (req, res) => {
+app.post('/api/notifications', async (req, res) => { // Tạo thông báo mới
   try {
     const { userId, title, message, date, read, type } = req.body;
     const formattedDate = formatDate(date);
@@ -630,7 +588,7 @@ app.post('/api/notifications', async (req, res) => {
   }
 });
 
-app.put('/api/notifications/:id/read', async (req, res) => {
+app.put('/api/notifications/:id/read', async (req, res) => { // Đánh dấu thông báo đã đọc
   try {
     const [result] = await pool.query(
       'UPDATE notifications SET `read` = 1 WHERE id = ?',
@@ -648,7 +606,7 @@ app.put('/api/notifications/:id/read', async (req, res) => {
   }
 });
 
-app.delete('/api/notifications/:id', async (req, res) => {
+app.delete('/api/notifications/:id', async (req, res) => { // Xóa thông báo
   try {
     const [result] = await pool.query('DELETE FROM notifications WHERE id = ?', [req.params.id]);
     
@@ -663,99 +621,69 @@ app.delete('/api/notifications/:id', async (req, res) => {
   }
 });
 
-// Utility function to check for overdue books and lock user accounts
-const checkOverdueBooks = async () => {
+// Kiểm tra sách quá hạn
+const checkOverdueBooks = async () => { // Kiểm tra sách quá hạn và khóa tài khoản
   try {
     log('Checking for overdue books...');
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
     try {
-      // First, check if user_borrowed_books table exists, create it if it doesn't
-      try {
-        await connection.query(`
-          CREATE TABLE IF NOT EXISTS user_borrowed_books (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            userId INT NOT NULL,
-            bookId INT NOT NULL,
-            createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (userId) REFERENCES users(id),
-            FOREIGN KEY (bookId) REFERENCES books(id),
-            UNIQUE KEY unique_user_book (userId, bookId)
-          )
-        `);
-        log('Ensured user_borrowed_books table exists');
-      } catch (tableError) {
-        log(`Error checking/creating user_borrowed_books table: ${tableError.message}`);
-        // Continue even if this fails
-      }
-
-      // Get current date
       const currentDate = new Date();
       const formattedCurrentDate = formatDate(currentDate);
       
-      // Find case 1: borrowed books past their due date
       const [overdueRecords1] = await connection.query(
         'SELECT * FROM borrow_records WHERE status = "borrowed" AND dueDate < ? AND returnDate IS NULL',
         [formattedCurrentDate]
-      );
+      ); // Tìm sách quá hạn chưa trả
       
-      // Find case 2: books already marked as overdue
       const [overdueRecords2] = await connection.query(
         'SELECT br.* FROM borrow_records br ' +
         'LEFT JOIN users u ON br.userId = u.id ' +
         'WHERE br.status = "overdue" AND br.returnDate IS NULL AND (u.isBlocked IS NULL OR u.isBlocked = 0)'
-      );
+      ); // Tìm sách đã đánh dấu quá hạn
       
-      // Combine both sets of records
       const overdueRecords = [...overdueRecords1, ...overdueRecords2];
       
       log(`Found ${overdueRecords.length} overdue books (${overdueRecords1.length} newly overdue, ${overdueRecords2.length} already marked overdue)`);
       
-      // Debug - log all overdue records for inspection
       if (overdueRecords.length > 0) {
         log(`Overdue records details: ${JSON.stringify(overdueRecords)}`);
       }
       
       for (const record of overdueRecords) {
-        // Update the record status to overdue if it's not already
         if (record.status !== 'overdue') {
           await connection.query(
-            'UPDATE borrow_records SET status = "overdue" WHERE id = ?',
+            'UPDATE borrow_records SET status = "overdue" WHERE id = ?', // Đánh dấu sách quá hạn
             [record.id]
           );
           log(`Updated status to overdue for record ID: ${record.id}`);
         }
         
         try {
-          // Check if the record exists in user_borrowed_books
           const [existingRecords] = await connection.query(
             'SELECT * FROM user_borrowed_books WHERE userId = ? AND bookId = ?',
             [record.userId, record.bookId]
           );
           
-          // If no record exists in user_borrowed_books, add it
           if (existingRecords.length === 0) {
             log(`Adding missing user_borrowed_books record for userId: ${record.userId}, bookId: ${record.bookId}`);
             await connection.query(
-              'INSERT INTO user_borrowed_books (userId, bookId) VALUES (?, ?)',
+              'INSERT INTO user_borrowed_books (userId, bookId) VALUES (?, ?)', // Thêm bản ghi mượn
               [record.userId, record.bookId]
             );
           }
         } catch (userBorrowedBooksError) {
           log(`Warning: Could not update user_borrowed_books: ${userBorrowedBooksError.message}`);
-          // Continue even if this fails
         }
         
-        // Lock user account
         await connection.query(
-          'UPDATE users SET isBlocked = TRUE, blockReason = ? WHERE id = ?',
+          'UPDATE users SET isBlocked = TRUE, blockReason = ? WHERE id = ?', // Khóa tài khoản người dùng
           [`Account locked due to overdue book (ID: ${record.bookId})`, record.userId]
         );
         log(`Blocked user account with ID: ${record.userId}`);
         
         try {
-          // Create a notification for the user (only if one doesn't already exist)
           const [existingNotifications] = await connection.query(
             'SELECT * FROM notifications WHERE userId = ? AND type = "overdue" AND `read` = 0 LIMIT 1',
             [record.userId]
@@ -772,12 +700,11 @@ const checkOverdueBooks = async () => {
                 0, 
                 'overdue'
               ]
-            );
+            ); // Tạo thông báo quá hạn
             log(`Created notification for user ID: ${record.userId}`);
           }
         } catch (notificationError) {
           log(`Warning: Could not create notification: ${notificationError.message}`);
-          // Continue even if this fails
         }
       }
       
@@ -797,21 +724,8 @@ const checkOverdueBooks = async () => {
   }
 };
 
-// Run the check every hour
-const OVERDUE_CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
-setInterval(checkOverdueBooks, OVERDUE_CHECK_INTERVAL);
 
-// Manual trigger for checking overdue books
-app.post('/api/admin/check-overdue', async (req, res) => {
-  try {
-    const overdueCount = await checkOverdueBooks();
-    res.json({ message: `Checked for overdue books. Found and processed ${overdueCount} overdue records.` });
-  } catch (error) {
-    console.error('Error running overdue check:', error);
-    res.status(500).json({ error: 'Failed to check overdue books' });
-  }
-});
-
-app.listen(PORT, () => {
+// Khởi động server
+app.listen(PORT, () => { // Chạy server
   log(`Server running on port ${PORT}`);
 });

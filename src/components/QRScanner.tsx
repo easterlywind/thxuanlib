@@ -108,9 +108,6 @@ const QRScanner = ({ onScan, onClose }: QRScannerProps): JSX.Element => {
           if (requestRef.current) {
             cancelAnimationFrame(requestRef.current);
           }
-
-          // Handle successful scan
-          toast.success('Quét mã QR thành công');
           
           // Call onScan callback with the data FIRST
           onScan(code.data);

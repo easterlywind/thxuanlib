@@ -9,13 +9,12 @@ import {
   Dialog, 
   DialogContent, 
   DialogHeader, 
-  DialogTitle, 
-  DialogFooter
+  DialogTitle
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { BookOpen, QrCode, Search, Check, AlertTriangle, BookMarked, Calendar } from 'lucide-react';
+import { BookOpen, QrCode, Search, Check, AlertTriangle } from 'lucide-react';
 import QRScanner from '@/components/QRScanner';
-import { User, Book, BorrowRecord, Notification, BookReservation } from '@/types';
+import { User, Book, BorrowRecord, BookReservation } from '@/types';
 import { usersApi, booksApi, borrowRecordsApi, reservationApi, notificationsApi } from '@/services/apiService';
 
 enum BorrowReturnMode {
@@ -50,135 +49,123 @@ const BorrowReturn = () => {
   const [booksData, setBooksData] = useState<Book[]>([]);
 
   const handleScanQR = async (data: string) => {
-    console.log('Processing QR code data:', data);
-    
-    if (!data.startsWith('STUDENT:')) {
-      toast.error('Mã QR không hợp lệ');
+  if (!data.startsWith('STUDENT:')) {
+    toast.error('Mã QR không hợp lệ');
+    return;
+  }
+
+  const userId = data.split(':')[1];
+  try {
+    // Chỉ gọi API lấy dữ liệu 1 lần duy nhất ở đây!
+    const foundUser = await usersApi.getById(userId);
+    if (!foundUser) {
+      toast.error('Không tìm thấy tài khoản người dùng');
+      return;
+    }
+    if (foundUser.role !== 'student') {
+      toast.error('Tài khoản không phải là độc giả');
       return;
     }
 
-    const userId = data.split(':')[1];
-    console.log('Looking for user with ID:', userId);
-    
-    try {
-      // Get user from API
-      const foundUser = await usersApi.getById(userId);
-      console.log('Found user:', foundUser);
-      
-      if (!foundUser) {
-        toast.error('Không tìm thấy tài khoản người dùng');
-        return;
+    // Get all data we need from API
+    const [allBorrowRecords, allBooks, reservations] = await Promise.all([
+      borrowRecordsApi.getAll(),
+      booksApi.getAll(),
+      reservationApi.getUserReservations(userId)
+    ]);
+
+    // Lưu booksData lại, các bước sau chỉ search trong state này, KHÔNG gọi lại API nữa!
+    setBooksData(allBooks);
+
+    // Find user's borrow records
+    const records = allBorrowRecords.filter(record =>
+      record.userId === foundUser.id &&
+      record.status === 'borrowed'
+    );
+    // Add book titles to borrow records
+    const enhancedRecords = records.map(record => {
+      const book = allBooks.find(b => b.id === record.bookId);
+      return {
+        ...record,
+        bookTitle: book?.title,
+        bookIsbn: book?.isbn
+      };
+    });
+
+    setCurrentUser(foundUser);
+    setIsUserBlocked(!!foundUser.isBlocked);
+    setUserBorrowRecords(enhancedRecords);
+    setUserReservations(reservations);
+    setIsReturn(records.length > 0);
+
+    setTimeout(() => {
+      if (foundUser.isBlocked) {
+        toast.error('Tài khoản bị khóa do quá hạn trả sách');
+      } else {
+        toast.success('Quét mã QR thành công');
       }
+      setMode(BorrowReturnMode.BOOK_INPUT);
+    }, 500);
 
-      if (foundUser.role !== 'student') {
-        toast.error('Tài khoản không phải là độc giả');
-        return;
-      }
+  } catch (error) {
+    console.error('Error processing QR code:', error);
+    toast.error('Lỗi khi xử lý mã QR');
+  }
+};
 
-      // Get all data we need from API
-      const [allBorrowRecords, allBooks, reservations] = await Promise.all([
-        borrowRecordsApi.getAll(),
-        booksApi.getAll(),
-        reservationApi.getUserReservations(userId)
-      ]);
-      
-      // Save books data for later use
-      setBooksData(allBooks);
-      
-      // Find user's borrow records
-      const records = allBorrowRecords.filter(record => 
-        record.userId === foundUser.id && 
-        record.status === 'borrowed'
-      );
-      
-      // Add book titles to borrow records
-      const enhancedRecords = records.map(record => {
-        const book = allBooks.find(b => b.id === record.bookId);
-        return {
-          ...record,
-          bookTitle: book?.title,
-          bookIsbn: book?.isbn
-        };
-      });
-      
-      // Update state
-      setCurrentUser(foundUser);
-      setIsUserBlocked(!!foundUser.isBlocked);
-      setUserBorrowRecords(enhancedRecords);
-      setUserReservations(reservations);
-      setIsReturn(records.length > 0);
-
-      // Update UI with a small delay
-      setTimeout(() => {
-        if (foundUser.isBlocked) {
-          toast.error('Tài khoản bị khóa do quá hạn trả sách');
-        } else {
-          toast.success('Quét mã QR thành công');
-        }
-        // Force mode update
-        setMode(BorrowReturnMode.BOOK_INPUT);
-        console.log('UI Mode updated to:', BorrowReturnMode.BOOK_INPUT);
-      }, 500);
-    } catch (error) {
-      console.error('Error processing QR code:', error);
-      toast.error('Lỗi khi xử lý mã QR');
-    }
-  };
 
   const searchBook = async () => {
-    if (!bookISBN) {
-      setErrorMessage('Vui lòng nhập mã ISBN của sách');
+  if (!bookISBN) {
+    setErrorMessage('Vui lòng nhập mã ISBN của sách');
+    return;
+  }
+
+  try {
+    // KHÔNG gọi lại API! Dùng booksData từ state đã có sẵn
+    const searchISBN = bookISBN.trim();
+    const foundBook = booksData.find(book =>
+      book.isbn.toLowerCase().includes(searchISBN.toLowerCase()) ||
+      searchISBN.toLowerCase().includes(book.isbn.toLowerCase())
+    );
+
+    if (!foundBook) {
+      setErrorMessage('Không tìm thấy sách với mã ISBN này');
+      setCurrentBook(null);
       return;
     }
 
-    try {
-      // Get all books from API
-      const allBooks = await booksApi.getAll();
-      
-      // Case-insensitive search and trim whitespace
-      const searchISBN = bookISBN.trim();
-      const foundBook = allBooks.find(book => 
-        book.isbn.toLowerCase().includes(searchISBN.toLowerCase()) || 
-        searchISBN.toLowerCase().includes(book.isbn.toLowerCase())
+    setCurrentBook(foundBook);
+    setErrorMessage('');
+
+    // Check if book is already borrowed by this user
+    if (isReturn) {
+      const isBorrowedByUser = userBorrowRecords.some(
+        record => record.bookId === foundBook.id
       );
-      
-      if (!foundBook) {
-        setErrorMessage('Không tìm thấy sách với mã ISBN này');
-        setCurrentBook(null);
+
+      if (!isBorrowedByUser) {
+        setErrorMessage('Độc giả không mượn sách này');
         return;
       }
-
-      setCurrentBook(foundBook);
-      setErrorMessage('');
-
-      // Check if book is already borrowed by this user
-      if (isReturn) {
-        const isBorrowedByUser = userBorrowRecords.some(
-          record => record.bookId === foundBook.id
-        );
-        
-        if (!isBorrowedByUser) {
-          setErrorMessage('Độc giả không mượn sách này');
-          return;
-        }
-      } else {
-        // Check if book is available for borrowing
-        if (foundBook.availableQuantity <= 0) {
-          setErrorMessage('Sách này hiện không có sẵn để mượn. Bạn có thể đặt trước sách này.');
-          setIsReserving(true);
-          setCurrentBook(foundBook);
-          setMode(BorrowReturnMode.RESERVE_CONFIRM);
-          return;
-        }
+    } else {
+      // Check if book is available for borrowing
+      if (foundBook.availableQuantity <= 0) {
+        setErrorMessage('Sách này hiện không có sẵn để mượn. Bạn có thể đặt trước sách này.');
+        setIsReserving(true);
+        setCurrentBook(foundBook);
+        setMode(BorrowReturnMode.RESERVE_CONFIRM);
+        return;
       }
-
-      // Move to confirm step
-      setMode(BorrowReturnMode.CONFIRM);
-    } catch (error) {
-      console.error('Error searching for book:', error);
-      toast.error('Lỗi khi tìm kiếm sách');
     }
-  };
+
+    setMode(BorrowReturnMode.CONFIRM);
+
+  } catch (error) {
+    console.error('Error searching for book:', error);
+    toast.error('Lỗi khi tìm kiếm sách');
+  }
+};
+
 
   const handleConfirmAction = async () => {
     if (!currentUser || !currentBook) return;
@@ -640,3 +627,6 @@ const BorrowReturn = () => {
 };
 
 export default BorrowReturn;
+
+
+
